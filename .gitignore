@@ -19,3 +19,6 @@ __pycache__/
 *.swo
 .DS_Store
 Thumbs.db
+
+# 本地助手工作数据
+.codebuddy/
