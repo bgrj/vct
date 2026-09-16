@@ -18,7 +18,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field, replace as dataclass_replace
 
-from . import config, ffmpeg_utils, quality, renderer, style_profile, subtitles
+from . import config, ffmpeg_utils, quality, renderer, story_gaps, style_profile, subtitles
 from .config import VideoToolError
 
 _EPISODE_RE = re.compile(r'[Ss](\d{1,2})[Ee](\d{1,3})')
@@ -83,6 +83,9 @@ class DialogueOptions:
     resume: bool = True               # 断点续跑：已存在图片则跳过
     clean: bool = False               # 重建：先清空输出目录中的历史图片与索引
     eye_refine: str = 'closed'        # 闭眼重采样口径：closed / half / off
+    story_gaps: bool = True           # 补截剧情延续帧（台词之间的无台词空窗）
+    story_gap_min: float = config.STORY_GAP_MIN          # 空窗最短间隔（秒）
+    story_gap_max_per: int = config.STORY_GAP_MAX_PER_GAP    # 每空窗补截上限
     write_index: bool = True
     write_report: bool = True
 
@@ -115,6 +118,13 @@ class EpisodeResult:
     eye_unknown: int = 0              # 无有效人脸、无法判定眼睛状态的句数
     eye_refined: int = 0              # 因闭眼/半闭眼而重采样、且挑到更好一帧的句数
     eye_refine_tried: int = 0         # 触发重采样的句数（含重采样后仍无改善的）
+    story_enabled: bool = False       # 本次是否执行了剧情延续帧补截
+    story_gap_min: float = 0.0        # 补截使用的空窗阈值（秒），供报告说明口径
+    story_gaps_total: int = 0         # 枚举出的无台词空窗数
+    story_frames: int = 0             # 本次补截的剧情延续帧张数
+    story_skipped: int = 0            # 已处理过而跳过的空窗数（含人工淘汰）
+    story_rows: list = field(default_factory=list)        # 剧情延续帧索引行
+    story_notes: list = field(default_factory=list)       # [(StoryGap, 状态说明), ...]
 
 
 @dataclass
@@ -679,6 +689,38 @@ def process_video(video_path, options=None, reporter=None):
                             % (result.refilled, len(missing) - result.refilled))
         result.failed = len(failed_indexes)
 
+        # 剧情延续帧：台词之间的沉默画面（反应镜头、物件特写、回忆闪回）同样
+        # 承载剧情，按无台词空窗系统化补截，替代人工 ffmpeg 抽帧排查。
+        # 抽样试跑（只处理部分台词）时不补截，避免试跑目录里混入全量剧情帧。
+        if options.story_gaps and result.planned_cues >= result.total_cues:
+            try:
+                duration = ffmpeg_utils.probe_duration(video_path)
+            except VideoToolError as exc:
+                result.errors.append('剧情延续帧：%s' % exc)
+                duration = 0.0
+            if duration > 0:
+                gaps = story_gaps.compute_gaps(cues, duration, options.story_gap_min)
+                result.story_enabled = True
+                result.story_gap_min = options.story_gap_min
+                result.story_gaps_total = len(gaps)
+                reporter.status(
+                    '剧情延续帧：发现 %d 个无台词空窗（间隔 ≥ %.1f 秒，含片头/片尾）'
+                    % (len(gaps), options.story_gap_min)
+                )
+                story_rows, notes, story_stats = story_gaps.capture_story_frames(
+                    video_path, gaps, analyzer, work_dir, output_dir, episode,
+                    os.path.join(output_dir, config.INDEX_CSV_NAME),
+                    options.story_gap_max_per, reporter,
+                )
+                result.story_rows = story_rows
+                result.story_notes = notes
+                result.story_frames = story_stats['captured']
+                result.story_skipped = story_stats['skipped']
+                reporter.status(
+                    '剧情延续帧：补截 %d 张，跳过已处理空窗 %d 个'
+                    % (result.story_frames, result.story_skipped)
+                )
+
         if options.write_index:
             index_path = os.path.join(output_dir, config.INDEX_CSV_NAME)
             if result.rows:
@@ -686,6 +728,9 @@ def process_video(video_path, options=None, reporter=None):
             # 被跳过的台词没有评分数据，但索引表要覆盖整集图片
             if result.backfill_rows:
                 renderer.fill_index_gaps(result.backfill_rows, index_path)
+            # 剧情延续帧行只补缺失的记录，不动历史行（含人工淘汰的台账行）
+            if result.story_rows:
+                renderer.fill_index_gaps(result.story_rows, index_path)
 
         result.elapsed = time.time() - started
         if options.write_report:
@@ -772,6 +817,40 @@ def _write_episode_report(result, reporter):
             lines.append(refine_line)
         else:
             lines.insert(anchor + 1, refine_line)
+
+    if result.story_enabled:
+        story_lines = [
+            '',
+            '剧情延续帧（无台词空窗补截，需人工复核去留）：',
+            '  空窗总数　：%d 个（相邻台词间隔 ≥ %.1f 秒，含片头/片尾）'
+            % (result.story_gaps_total, result.story_gap_min),
+            '  本次补截　：%d 张（句序 0004a/b/c…，与台词图按 4 位序号穿插）'
+            % result.story_frames,
+            '  跳过空窗　：%d 个（此前已补截或已人工淘汰）' % result.story_skipped,
+        ]
+        if result.story_notes:
+            story_lines.append('  空窗明细：')
+            story_lines.extend(
+                '    - %s ~ %s（%.1f 秒）：%s'
+                % (subtitles.format_timecode(gap.start),
+                   subtitles.format_timecode(gap.end),
+                   gap.duration, note)
+                for gap, note in result.story_notes
+            )
+        story_lines.extend([
+            '  复核建议　：按文件名字母序看一遍 0004a/0004b… 等剧情帧，',
+            '  　　　　　　删除与剧情无关的画面（图片 + 索引行）；只删图片时行保留',
+            '  　　　　　　为台账，重跑不会重补；连行一起删则可让该空窗重新补截。',
+        ])
+        anchor = next(
+            (position for position, text in enumerate(lines)
+             if text.startswith('人像与眼睛')),
+            None,
+        )
+        if anchor is None:
+            lines.extend(story_lines)
+        else:
+            lines[anchor:anchor] = story_lines
 
     if result.cleaned_images:
         lines.insert(8, '重建清理　：%d 张历史图片（含旧索引）' % result.cleaned_images)
@@ -864,14 +943,19 @@ def summarize(run_result):
         if episode.eye_refine_tried:
             lines.append('  重采样换帧：触发 %d 句，成功换帧 %d 句'
                          % (episode.eye_refine_tried, episode.eye_refined))
+        if episode.story_enabled:
+            lines.append('  剧情延续帧：空窗 %d 个，补截 %d 张，跳过已处理 %d 个'
+                         % (episode.story_gaps_total, episode.story_frames,
+                            episode.story_skipped))
         lines.append('  验收结论：%s（应出图 %d 张 / 台词 %d 句，失败 %d 句）'
                      % (verdict, covered, episode.total_cues, episode.failed))
         if episode.cleaned_images:
             lines.append('  重建清理：%d 张历史图片' % episode.cleaned_images)
     lines.append('')
-    lines.append('合计：成功 %d 张，降级 %d 张，跳过 %d 张，失败 %d 句'
+    lines.append('合计：成功 %d 张，降级 %d 张，跳过 %d 张，失败 %d 句，剧情延续帧 %d 张'
                  % (run_result.success, run_result.degraded,
-                    run_result.skipped, run_result.failed))
+                    run_result.skipped, run_result.failed,
+                    sum(episode.story_frames for episode in run_result.episodes)))
 
     if run_result.incomplete_files:
         lines.append('')

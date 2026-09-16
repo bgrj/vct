@@ -109,6 +109,12 @@ HELP_TEXT_DIALOGUE = """使用步骤（台词智能截图）：
   贴底位置取自参考素材统计出的样式基线 style_profile.json
 · 无人像的空镜、背影、字幕卡（即使画面全黑）同样正常出图，只是标记为降级
 · 整句候选都没睁眼时自动重采样一次（提高候选帧数），把闭眼帧换成睁眼帧
+· 台词之间的无台词空窗（间隔 ≥ 6 秒，含片头/片尾）自动补截「剧情延续帧」：
+  承载前文台词情感或情节延伸的画面（反应镜头、物件特写、回忆闪回等）。
+  同一空窗按镜头去重后挑画质最优的代表画面，每窗至多 3 张，句序记为
+  「前接句序号 4 位 + 子后缀 a/b/c」（如 0004a、0298b），按文件名字母序
+  天然插在对应台词图之间；写入 _index.csv；是否承载剧情需人工复核，
+  删除后重跑不会重复补截（索引保留台账）
 · 收尾做完整性校验（字幕句数 / 图片数 / 索引行数），缺图的句子自动补跑
 · 输出目录内生成 _index.csv（台词索引表）与 _report.txt（处理报告）
 · 图片命名如 S01E03_0007_00-12-34.567.jpg，按句序与时间码有序排列
@@ -156,6 +162,10 @@ class VideoFrameExtractorApp:
         self.clean_output = tk.BooleanVar(value=False)
         # 闭眼帧重采样口径：整句都没睁眼时把候选帧数临时调高，再挑一次
         self.eye_refine = tk.StringVar(value="closed")
+        # 剧情延续帧：台词之间的无台词空窗（反应镜头、物件特写等）系统化补截
+        self.story_gaps = tk.BooleanVar(value=True)
+        self.story_gap_min = tk.DoubleVar(value=tool_config.STORY_GAP_MIN)
+        self.story_gap_max_per = tk.IntVar(value=tool_config.STORY_GAP_MAX_PER_GAP)
         
         self.create_widgets()
     
@@ -238,6 +248,21 @@ class VideoFrameExtractorApp:
                      values=tool_config.EYE_REFINE_MODES).grid(row=5, column=1, sticky=tk.W, padx=5, pady=5)
         ttk.Label(self.dialogue_frame, text="closed 只救「整句都闭眼」；half 连半闭一起救；off 关闭").grid(
             row=5, column=2, sticky=tk.W, padx=5, pady=5)
+        
+        ttk.Checkbutton(self.dialogue_frame, text="补截剧情延续帧（台词之间的无台词空窗：反应镜头、物件特写等，句序 0004a/b/c…，需人工复核去留）",
+                        variable=self.story_gaps).grid(row=6, column=0, columnspan=3, sticky=tk.W, padx=5, pady=5)
+        
+        ttk.Label(self.dialogue_frame, text="空窗阈值(秒):").grid(row=7, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Spinbox(self.dialogue_frame, from_=1.0, to=120.0, increment=0.5,
+                    textvariable=self.story_gap_min, width=10).grid(row=7, column=1, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(self.dialogue_frame, text="相邻台词间隔达到该秒数才补截（含片头/片尾）").grid(
+            row=7, column=2, sticky=tk.W, padx=5, pady=5)
+        
+        ttk.Label(self.dialogue_frame, text="每空窗上限:").grid(row=8, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Spinbox(self.dialogue_frame, from_=1, to=10, textvariable=self.story_gap_max_per,
+                    width=10).grid(row=8, column=1, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(self.dialogue_frame, text="镜头去重后每个空窗最多出几张").grid(
+            row=8, column=2, sticky=tk.W, padx=5, pady=5)
         
         # 进度条
         self.progress_frame = ttk.LabelFrame(main_frame, text="处理进度", padding="5")
@@ -348,6 +373,9 @@ class VideoFrameExtractorApp:
                 max_cues=max(0, self.max_cues.get()),
                 clean=self.clean_output.get(),
                 eye_refine=self.eye_refine.get(),
+                story_gaps=self.story_gaps.get(),
+                story_gap_min=max(1.0, self.story_gap_min.get()),
+                story_gap_max_per=max(1, self.story_gap_max_per.get()),
             )
         else:
             if not self.output_dir:
@@ -513,6 +541,14 @@ def build_arg_parser():
     parser.add_argument("--eye-refine", choices=list(tool_config.EYE_REFINE_MODES), default="closed",
                         help="闭眼帧重采样口径：closed=整句都闭眼时重采样（默认），"
                              "half=半闭也重采样，off=关闭")
+    parser.add_argument("--no-story-gaps", action="store_true",
+                        help="不补截剧情延续帧（台词之间的无台词空窗）；默认补截")
+    parser.add_argument("--story-gap-min", type=float, default=tool_config.STORY_GAP_MIN,
+                        help="无台词空窗的最短间隔秒数（含片头/片尾），默认 %.1f"
+                             % tool_config.STORY_GAP_MIN)
+    parser.add_argument("--story-gap-max-per", type=int, default=tool_config.STORY_GAP_MAX_PER_GAP,
+                        help="镜头去重后每个空窗最多补截几张，默认 %d"
+                             % tool_config.STORY_GAP_MAX_PER_GAP)
     return parser
 
 
@@ -532,6 +568,9 @@ def run_cli(cli_args):
             resume=not cli_args.no_resume,
             clean=cli_args.clean,
             eye_refine=cli_args.eye_refine,
+            story_gaps=not cli_args.no_story_gaps,
+            story_gap_min=max(1.0, cli_args.story_gap_min),
+            story_gap_max_per=max(1, cli_args.story_gap_max_per),
         )
         try:
             result = pipeline.run(cli_args.input, options)

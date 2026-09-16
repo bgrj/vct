@@ -84,6 +84,14 @@ def format_timecode(seconds):
 
 
 _IMAGE_NAME_RE = re.compile(r'^(?P<episode>.+)_(?P<index>\d+)_(?P<time>\d{2}-\d{2}-\d{2}\.\d{3})$')
+# 剧情延续帧命名：<集号>_<前接句序号 4 位><子后缀 a/b/c...>_<时间码>.jpg
+# 序号格式 \d{4}[a-z]+ 与台词帧的 \d{4} 共用同一排序空间，'a'..'z' 字符码大于
+# '0'..'9'，故 0004 < 0004a < 0005，按文件名字母序天然按叙事顺序排列。
+_STORY_IMAGE_NAME_RE = re.compile(
+    r'^(?P<episode>.+)_(?P<seq>\d{4}[a-z]+)_(?P<time>\d{2}-\d{2}-\d{2}\.\d{3})$'
+)
+# 索引表「句序」列识别：与图片名中的 seq 段保持一致。00ab/0000/纯数字 都不算。
+_STORY_SEQ_RE = re.compile(r'^\d{4}[a-z]+$')
 
 
 def build_image_name(episode_tag, index, timestamp):
@@ -106,6 +114,95 @@ def parse_image_timecode(name):
         return None
     hours, minutes, seconds = match.group('time').split('-')
     return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+
+
+def build_story_image_name(episode_tag, seq, timestamp):
+    """生成剧情延续帧图片名：<集号>_<seq 4位+字母>_<时间码>.jpg。
+
+    seq 形如 '0004a' / '0298b'：前 4 位是「前接台词序号」（无前接时为 0000），
+    后缀字母是空窗内第几张（a / b / c...）。这种结构让按文件名字母序排列时
+    剧情帧天然插在前一句台词图与后一句台词图之间。
+    """
+    return '%s_%s_%s.%s' % (
+        episode_tag, str(seq), format_timecode(timestamp), config.IMAGE_FORMAT
+    )
+
+
+def parse_story_image_seq(name):
+    """从剧情延续帧文件名反解 seq（如 '0004a'），无法解析时返回 None。"""
+    match = _STORY_IMAGE_NAME_RE.match(os.path.splitext(name)[0])
+    if not match:
+        return None
+    return match.group('seq')
+
+
+def list_story_seqs(output_dir, episode_tag):
+    """列出输出目录中剧情延续帧已占用的 seq 集合（如 {'0004a', '0004b'}）。
+
+    断点续跑时据此识别已生成的剧情帧，避免重复补截；占位但图片已删除的 seq
+    不会出现在这里——它们的台账在 _index.csv 中，仍由 capture_story_frames
+    通过 read_story_index_rows 走 gap.key 维度判断。
+    """
+    seqs = set()
+    try:
+        names = os.listdir(output_dir)
+    except OSError:
+        return seqs
+
+    prefix = '%s_' % episode_tag
+    for name in names:
+        if not name.startswith(prefix):
+            continue
+        if os.path.splitext(name)[1].lower() not in ('.jpg', '.jpeg', '.png'):
+            continue
+        seq = parse_story_image_seq(name)
+        if seq is not None:
+            seqs.add(seq)
+    return seqs
+
+
+def read_story_index_rows(path):
+    """读取索引表中剧情延续帧的记录，返回 [{'seq','key','image'}, ...]。
+
+    不校验图片是否还存在：这一行的职责是「该空窗已处理过」的台账——
+    图片被人工删除时行保留（文件名已由 _read_index_rows 清空），重跑据此
+    跳过，避免把人工淘汰过的空窗再补一遍造成重复劳动。识别条件是 seq 匹配
+    `\\d{4}[a-z]+`（与图片名 _STORY_IMAGE_NAME_RE 保持一致）；旧 X## 格式
+    的索引需要先经 tools/migrate_story_naming.py 迁移。
+    """
+    records = []
+    if not os.path.isfile(path):
+        return records
+
+    try:
+        with open(path, 'r', newline='', encoding='utf-8-sig') as handle:
+            reader = csv.reader(handle)
+            header = next(reader, None)
+            if not header:
+                return records
+            try:
+                start_col = header.index('起始时间码')
+                end_col = header.index('结束时间码')
+                image_col = header.index('文件名')
+            except ValueError:
+                return records
+            for raw in reader:
+                if not raw or not raw[0].strip():
+                    continue
+                index_text = raw[0].strip()
+                if not _STORY_SEQ_RE.match(index_text):
+                    continue
+                start_tc = raw[start_col].strip() if len(raw) > start_col else ''
+                end_tc = raw[end_col].strip() if len(raw) > end_col else ''
+                image = raw[image_col].strip() if len(raw) > image_col else ''
+                records.append({
+                    'seq': index_text,
+                    'key': '%s~%s' % (start_tc, end_tc),
+                    'image': image,
+                })
+    except (OSError, csv.Error):
+        return []
+    return records
 
 
 def find_existing_image(output_dir, episode_tag, index):
@@ -259,11 +356,24 @@ _INDEX_IMAGE_COLUMN = INDEX_HEADER.index('文件名')
 
 
 def _index_sort_key(value):
-    """句序排序键：能转成整数的按数值排，否则按字符串排。"""
+    """句序排序键：让剧情帧按「4 位数字 + 字母」精确插在对应台词之间。
+
+    解析规则：
+    - 纯整数（含 '1'、'0001'）：按数值升序
+    - 剧情帧 '0004a'：前缀按数值排，相同前缀再按字母后缀升序
+      → 0004 < 0004a < 0004b < ... < 0005
+    - 片头占位 0000a/b/c 的数值 0 最小，自然落到最前
+    - 其他异常值落到末尾桶，按字符串排序（不抛错）
+    """
+    text = str(value).strip()
+    match = re.match(r'^(\d{4})([a-z]*)$', text)
+    if match:
+        prefix, suffix = int(match.group(1)), match.group(2)
+        return (0, prefix, suffix)
     try:
-        return (0, int(str(value).strip()), '')
+        return (0, int(text), '')
     except (TypeError, ValueError):
-        return (1, 0, str(value))
+        return (1, 0, text)
 
 
 def _read_index_rows(path):
@@ -281,8 +391,16 @@ def _read_index_rows(path):
                 if not raw or not raw[0].strip():
                     continue
                 image_name = raw[_INDEX_IMAGE_COLUMN].strip() if len(raw) > _INDEX_IMAGE_COLUMN else ''
-                # 图片被删除后不应继续留在索引里，否则索引会与目录内容不符
+                # 图片被删除后不应继续留在索引里，否则索引会与目录内容不符。
+                # 例外：剧情延续帧行保留（清空文件名）——它的起止时间码记录着
+                # 「该空窗已处理」，重跑据此跳过，防止人工淘汰过的画面被重复
+                # 补截；想重新补截时删除该行即可。识别条件是句序匹配剧情帧格式
+                # \d{4}[a-z]+，与图片名 _STORY_IMAGE_NAME_RE 保持一致。
                 if image_name and not os.path.isfile(os.path.join(output_dir, image_name)):
+                    if _STORY_SEQ_RE.match(raw[0].strip()):
+                        retained = list(raw)
+                        retained[_INDEX_IMAGE_COLUMN] = ''
+                        existing[raw[0].strip()] = retained
                     continue
                 existing[raw[0].strip()] = raw
     except (OSError, csv.Error):
