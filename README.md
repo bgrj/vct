@@ -502,6 +502,4 @@ Video Pics Cut/
 └── README.md                 # 本文件
 ```
 
-开发者信息：© 2025 一模型Ai (https://jmlovestore.com)　｜　许可证：MIT License
-
-![123](https://github.com/user-attachments/assets/814e1ae5-61f2-4e35-99f8-1e27fb377864)
+开发者信息：© 2026-2028 Ourbeing (https://ourbeings.com)　｜　许可证：MIT License
