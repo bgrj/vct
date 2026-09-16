@@ -1,15 +1,27 @@
-# Python版本要求
-python>=3.6
+# 第三方依赖清单（pip install -r requirements.txt）
+#
+# Python 版本：建议 3.12（mediapipe 对 3.13 的支持滞后；低于 3.9 无法使用 Tasks API）
+# 说明：本项目全程本地运行，安装完成后不会再有任何网络请求。
 
-# 外部依赖
-# FFmpeg - 需要单独安装并添加到系统环境变量
-# Windows: 下载FFmpeg并添加到系统环境变量
-# Linux: sudo apt-get install ffmpeg
-# MacOS: brew install ffmpeg
+# 基础数值计算
+numpy>=1.24,<3
 
-# 本项目主要使用Python标准库
-# - tkinter (GUI界面)
-# - os (文件操作)
-# - subprocess (调用FFmpeg)
-# - threading (多线程处理)
-# - time (时间处理)
+# 视频帧读写、清晰度与运动模糊度量
+opencv-python>=4.8,<6
+
+# 台词文字绘制到图片底部（中文需系统字体，见 README）
+pillow>=10.0,<13
+
+# 人脸关键点分析：睁开眼程度、嘴部自然度、人脸面积
+# 模型文件放在 models/face_landmarker.task，随项目提供，推理完全离线
+mediapipe>=0.10.9,<2
+
+# 外部依赖（无法通过 pip 安装，需单独准备）：
+# FFmpeg / FFprobe —— 用于导出内嵌字幕与抽取候选帧。
+# 程序会按以下顺序自动查找，找不到才回退系统 PATH：
+#   E:\Tools\ffmpeg\bin
+#   C:\ffmpeg\bin
+#   D:\ffmpeg\bin
+#   C:\Program Files\ffmpeg\bin
+#   D:\Program Files\ffmpeg\bin
+# 也可以先把 ffmpeg/bin 加入系统环境变量 PATH。

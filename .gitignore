@@ -1,0 +1,21 @@
+# 运行残留（按文件名通配）
+_run*.err.log
+_run*.out.log
+_run*.pid
+*.err.log
+*.out.log
+*.pid
+
+# Python 字节码与缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE / 编辑器临时
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
