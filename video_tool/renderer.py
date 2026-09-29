@@ -181,9 +181,9 @@ def read_story_index_rows(path):
             if not header:
                 return records
             try:
-                start_col = header.index('起始时间码')
-                end_col = header.index('结束时间码')
-                image_col = header.index('文件名')
+                start_col = header.index('start_tc')
+                end_col = header.index('end_tc')
+                image_col = header.index('filename')
             except ValueError:
                 return records
             for raw in reader:
@@ -345,25 +345,18 @@ def render_subtitle(src_image, dst_image, text, style=None):
 # ---------------------------------------------------------------------------
 # 索引与报告
 # ---------------------------------------------------------------------------
-INDEX_HEADER = [
-    '句序', '起始时间码', '结束时间码', '时长(秒)', '台词',
-    '文件名', '画面时间码', '综合得分', '清晰度', '运动惩罚',
-    '人脸数', '眼睛状态', '嘴部自然', '说话状态', '构图分', '时序分', '镜头组',
-    '画面类型', '是否降级',
-]
+INDEX_HEADER = list(config.INDEX_COLUMNS)
 
-_INDEX_IMAGE_COLUMN = INDEX_HEADER.index('文件名')
+_INDEX_IMAGE_COLUMN = INDEX_HEADER.index('filename')
 
 
 def _index_sort_key(value):
-    """句序排序键：让剧情帧按「4 位数字 + 字母」精确插在对应台词之间。
+    """Sort key for seq so story frames intercalate between dialogue rows.
 
-    解析规则：
-    - 纯整数（含 '1'、'0001'）：按数值升序
-    - 剧情帧 '0004a'：前缀按数值排，相同前缀再按字母后缀升序
+    - Plain ints ('1', '0001'): numeric ascending
+    - Story seq '0004a': numeric prefix then letter suffix
       → 0004 < 0004a < 0004b < ... < 0005
-    - 片头占位 0000a/b/c 的数值 0 最小，自然落到最前
-    - 其他异常值落到末尾桶，按字符串排序（不抛错）
+    - Head placeholders 0000a/b/c sort first
     """
     text = str(value).strip()
     match = re.match(r'^(\d{4})([a-z]*)$', text)
@@ -377,7 +370,11 @@ def _index_sort_key(value):
 
 
 def _read_index_rows(path):
-    """读取已有索引表，丢弃图片已不存在的记录，返回 {句序: 原始行}。"""
+    """Load existing index; drop rows whose image file is missing.
+
+    Story-gap rows are kept as ledger entries with an empty filename so
+    re-runs skip already-reviewed gaps.
+    """
     existing = {}
     if not os.path.isfile(path):
         return existing
@@ -386,16 +383,11 @@ def _read_index_rows(path):
     try:
         with open(path, 'r', newline='', encoding='utf-8-sig') as handle:
             reader = csv.reader(handle)
-            next(reader, None)                    # 跳过表头
+            next(reader, None)
             for raw in reader:
                 if not raw or not raw[0].strip():
                     continue
                 image_name = raw[_INDEX_IMAGE_COLUMN].strip() if len(raw) > _INDEX_IMAGE_COLUMN else ''
-                # 图片被删除后不应继续留在索引里，否则索引会与目录内容不符。
-                # 例外：剧情延续帧行保留（清空文件名）——它的起止时间码记录着
-                # 「该空窗已处理」，重跑据此跳过，防止人工淘汰过的画面被重复
-                # 补截；想重新补截时删除该行即可。识别条件是句序匹配剧情帧格式
-                # \d{4}[a-z]+，与图片名 _STORY_IMAGE_NAME_RE 保持一致。
                 if image_name and not os.path.isfile(os.path.join(output_dir, image_name)):
                     if _STORY_SEQ_RE.match(raw[0].strip()):
                         retained = list(raw)
@@ -409,14 +401,16 @@ def _read_index_rows(path):
 
 
 def _row_to_columns(row):
-    """把一行处理结果转成索引表的列顺序。
+    """Map an internal result dict to INDEX_HEADER order.
 
-    '眼睛状态' 用三态：睁开 / 半闭 / 闭合，无有效人脸时留空；旧索引里的
-    「是 / 否」原样保留，重新跑一遍（`--clean`）就会换成三态文案。
-    '是否降级' 用三态：True -> 是、False -> 否、缺失 -> 空（历史图片的降级
-    状态无法追溯，留空而不是冒充「否」）。
+    eye_state: open / half / closed (empty if no face)
+    degraded: yes / no (empty if unknown for historical rows)
     """
     degraded = row.get('degraded')
+    if degraded is None:
+        degraded_text = ''
+    else:
+        degraded_text = config.YES if degraded else config.NO
     return [
         row.get('index', ''),
         row.get('start_timecode', ''),
@@ -436,12 +430,12 @@ def _row_to_columns(row):
         row.get('timing', ''),
         row.get('shot', ''),
         row.get('frame_type', ''),
-        '' if degraded is None else ('是' if degraded else '否'),
+        degraded_text,
     ]
 
 
 def _write_index_rows(merged, path):
-    """按句序排序写出索引表（utf-8-sig，便于 Excel 直接打开）。"""
+    """Write index CSV sorted by seq (utf-8-sig for Excel)."""
     with open(path, 'w', newline='', encoding='utf-8-sig') as handle:
         writer = csv.writer(handle)
         writer.writerow(INDEX_HEADER)
@@ -451,11 +445,7 @@ def _write_index_rows(merged, path):
 
 
 def write_index_csv(rows, path):
-    """写出台词索引表。
-
-    采用「合并写入」：保留索引表中已有且图片仍存在的记录，再用手上的新结果覆盖
-    同句序的记录。这样抽样试跑（只处理前几句）或断点续跑都不会把整集索引写残。
-    """
+    """Merge-write dialogue index rows (resume / sample runs safe)."""
     merged = _read_index_rows(path)
     for row in rows:
         merged[str(row.get('index', ''))] = _row_to_columns(row)
@@ -463,12 +453,7 @@ def write_index_csv(rows, path):
 
 
 def fill_index_gaps(rows, path):
-    """只补写索引表中缺失的记录，已存在的记录一律不动。
-
-    断点续跑时被跳过的台词不会重新处理，也就没有评分数据；这里按图片文件名
-    与字幕时间轴把它们补回索引，保证索引表覆盖整集所有图片，同时避免用空白
-    字段覆盖先前的真实评分。
-    """
+    """Fill missing index rows only; never overwrite existing ones."""
     merged = _read_index_rows(path)
     for row in rows:
         key = str(row.get('index', ''))
@@ -479,7 +464,7 @@ def fill_index_gaps(rows, path):
 
 
 def write_report(lines, path):
-    """写出处理报告（纯文本，utf-8）。"""
+    """Write plain-text report (utf-8)."""
     with open(path, 'w', encoding='utf-8') as handle:
         handle.write('\n'.join(str(line) for line in lines))
         handle.write('\n')

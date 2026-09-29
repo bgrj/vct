@@ -1,21 +1,8 @@
 # -*- coding: utf-8 -*-
-"""按 _audit.csv 的推荐批量删除剧情延续帧
+"""Apply _audit.csv recommendations: delete story-gap images and tombstone index rows.
 
-使用场景：每集跑完并审计后，根据 audit 输出的「建议删除」/「复核」清单，把
-不再保留的图片删掉，并把 _index.csv 中对应行的「文件名」列清空（保留台账
-形态，重跑不会重补截）。
-
-行为：
-1. 读 <output>/_audit.csv，过滤 推荐 == recommend（默认 建议删除）
-2. 对每条命中行：
-   - 删除 <output>/<文件名>（文件存在时）
-   - 在 _index.csv 中按「句序」定位该行，把「文件名」列清空
-3. 写回 _index.csv（其它列原样保留）
-4. 干跑模式（--dry-run）只打印计划，不动文件
-
-与「重跑工具」的兼容性：台账行（文件名为空）会被 capture_story_frames 的
-ledger 识别为「该空窗已处理」，重跑不会重补截。想重新补截某空窗时
-删掉 _index.csv 中该行即可。
+Reads <output>/_audit.csv, filters recommendation == recommend (default: delete),
+deletes matching images, and clears the filename column in _index.csv (ledger kept).
 """
 from __future__ import annotations
 
@@ -32,79 +19,89 @@ if PROJECT_ROOT not in sys.path:
 from video_tool import config  # noqa: E402
 
 
-def apply(output_dir: str, recommend: str = '建议删除',
-          dry_run: bool = False) -> dict:
-    """主入口：扫描 audit + 实际删图 + 写回 index。返回统计字典。"""
-    audit_path = os.path.join(output_dir, '_audit.csv')
+def apply(output_dir: str, recommend: str = None, dry_run: bool = False) -> dict:
+    """Delete images and tombstone index rows for the given recommendation."""
+    if recommend is None:
+        recommend = config.RECOMMEND_DELETE
+    audit_path = os.path.join(output_dir, config.AUDIT_CSV_NAME)
     index_path = os.path.join(output_dir, config.INDEX_CSV_NAME)
     if not os.path.isfile(audit_path):
-        raise FileNotFoundError('找不到 audit 表：%s' % audit_path)
+        raise FileNotFoundError('audit CSV not found: %s' % audit_path)
     if not os.path.isfile(index_path):
-        raise FileNotFoundError('找不到索引表：%s' % index_path)
+        raise FileNotFoundError('index CSV not found: %s' % index_path)
 
     with open(audit_path, 'r', newline='', encoding='utf-8-sig') as handle:
         reader = csv.DictReader(handle)
-        candidates = [row for row in reader if row.get('推荐') == recommend]
+        # Accept English or legacy Chinese recommendation values
+        legacy = {
+            config.RECOMMEND_DELETE: ('delete', '建议删除'),
+            config.RECOMMEND_REVIEW: ('review', '复核'),
+        }
+        accept = set(legacy.get(recommend, (recommend,)))
+        accept.add(recommend)
+        candidates = [
+            row for row in reader
+            if (row.get('recommendation') or row.get('推荐') or '').strip() in accept
+        ]
     if not candidates:
         return {'deleted': 0, 'tombstoned': 0, 'missing': 0, 'dry_run': dry_run}
 
-    # 读索引
     with open(index_path, 'r', newline='', encoding='utf-8-sig') as handle:
         reader = csv.reader(handle)
         header = next(reader, None)
         rows = list(reader)
-    if not header or '句序' not in header or '文件名' not in header:
-        raise RuntimeError('索引表缺少必要列（句序 / 文件名）')
+    if not header:
+        raise RuntimeError('index CSV has no header')
 
-    seq_col = header.index('句序')
-    img_col = header.index('文件名')
+    # English preferred; fall back to legacy Chinese column names
+    def col(english, chinese):
+        if english in header:
+            return header.index(english)
+        if chinese in header:
+            return header.index(chinese)
+        raise RuntimeError('index missing column %s / %s' % (english, chinese))
 
-    # 索引按句序建 dict，方便定位
-    row_by_seq: dict = {}
+    seq_col = col('seq', '句序')
+    img_col = col('filename', '文件名')
+
+    row_by_seq = {}
     for raw in rows:
         seq = raw[seq_col].strip() if len(raw) > seq_col else ''
         if seq:
             row_by_seq[seq] = raw
 
     deleted = tombstoned = missing = 0
-    planned: list = []
+    planned = []
     for cand in candidates:
-        seq = cand.get('句序', '').strip()
-        image = cand.get('文件名', '').strip()
+        seq = (cand.get('seq') or cand.get('句序') or '').strip()
+        image = (cand.get('filename') or cand.get('文件名') or '').strip()
         if not seq:
             continue
         if seq not in row_by_seq:
             missing += 1
             continue
 
-        # 找图片路径
         image_path = os.path.join(output_dir, image) if image else ''
-        plan_entry = {
+        planned.append({
             'seq': seq,
             'image': image,
             'image_exists': bool(image) and os.path.isfile(image_path),
-            'index_has_image': bool(row_by_seq[seq][img_col].strip()),
-        }
-        planned.append(plan_entry)
-
+        })
         if dry_run:
             continue
 
-        # 1) 删图
         if image and os.path.isfile(image_path):
             try:
                 os.remove(image_path)
                 deleted += 1
             except OSError as exc:
-                print('  ! 删除失败 %s: %s' % (image, exc))
+                print('  ! delete failed %s: %s' % (image, exc))
 
-        # 2) 把索引行的 文件名 列清空
         if row_by_seq[seq][img_col].strip():
             row_by_seq[seq][img_col] = ''
             tombstoned += 1
 
     if not dry_run:
-        # 写回索引（保留原始行顺序，不重新排序）
         with open(index_path, 'w', newline='', encoding='utf-8-sig') as handle:
             writer = csv.writer(handle)
             writer.writerow(header)
@@ -126,15 +123,15 @@ def apply(output_dir: str, recommend: str = '建议删除',
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description='按 _audit.csv 推荐批量删除剧情延续帧（保留台账行）'
+        description='Apply audit recommendations: delete story frames, tombstone index'
     )
     parser.add_argument('--input', required=True,
-                        help='单集目录（…\\Love in the big City\\08）')
-    parser.add_argument('--recommend', default='建议删除',
-                        choices=['建议删除', '复核'],
-                        help='只处理此推荐的行，默认「建议删除」')
+                        help='Episode folder (e.g. ...\\your-show\\08)')
+    parser.add_argument('--recommend', default=config.RECOMMEND_DELETE,
+                        choices=[config.RECOMMEND_DELETE, config.RECOMMEND_REVIEW],
+                        help='Which recommendation to apply (default: delete)')
     parser.add_argument('--dry-run', action='store_true',
-                        help='只打印计划，不动文件')
+                        help='Print plan only; do not modify files')
     args = parser.parse_args(argv)
 
     video_dir = os.path.abspath(args.input)
@@ -142,11 +139,11 @@ def main(argv=None):
     output_dir = os.path.join(video_dir, base + config.OUTPUT_SUFFIX)
     stats = apply(output_dir, recommend=args.recommend, dry_run=args.dry_run)
     if args.dry_run:
-        print('干跑：计划删除 %d 张，tombstone %d 行（缺图 %d 张）'
+        print('dry-run: plan delete %d, tombstone %d, missing %d'
               % (stats.get('planned', 0), stats.get('tombstoned', 0),
                  stats.get('missing', 0)))
     else:
-        print('完成：删图 %d 张，索引 tombstone %d 行（缺图 %d 张）'
+        print('done: deleted %d, tombstoned %d, missing %d'
               % (stats['deleted'], stats['tombstoned'], stats['missing']))
     return 0
 

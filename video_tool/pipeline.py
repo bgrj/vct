@@ -1,14 +1,8 @@
 # -*- coding: utf-8 -*-
-"""台词截图主流程
+"""Dialogue capture pipeline.
 
-扫描输入目录 -> 推导输出目录（<集号>-pc）-> 选中文字幕轨并解析台词 ->
-逐句采样候选帧 -> 打分选优 -> 渲染台词并落盘 -> 汇总索引与报告。
-
-设计要点：
-* 一次只处理一集，便于逐集验收；
-* 断点续跑：该句图片已存在则跳过，中断后重跑不重复劳动；
-* 单句失败不中断整集，错误逐条记入报告；
-* 下载未完成的文件在扫描阶段就跳过，并说明原因。
+Scan -> derive <episode>-pics -> subtitles -> sample/score/render ->
+index + report. Resume-friendly; one episode at a time.
 """
 
 import os
@@ -23,76 +17,75 @@ from .config import VideoToolError
 
 _EPISODE_RE = re.compile(r'[Ss](\d{1,2})[Ee](\d{1,3})')
 
-# quality 给出的说话状态（英文枚举）到索引表中文文案的映射
+# Map quality enums to index CSV cell values (English)
 _SPEAKING_TEXT = {
-    'speaking': '正在说话',
-    'idle': '闭嘴',
-    'open': '张口过大',
+    'speaking': config.SPEAKING,
+    'idle': config.SPEAKING_CLOSED,
+    'open': config.SPEAKING_TOO_OPEN,
 }
 
-# 眼睛状态（英文枚举）到索引表中文文案的映射；无人像/无法判定时留空
 _EYE_TEXT = {
-    'open': '睁开',
-    'half': '半闭',
-    'closed': '闭合',
+    'open': config.EYE_OPEN,
+    'half': config.EYE_HALF,
+    'closed': config.EYE_CLOSED,
 }
 
-# 上表的反向映射：从索引行读回眼睛状态，用于判断哪些句子需要重采样
 _EYE_TEXT_STATE = {text: state for state, text in _EYE_TEXT.items()}
+_EYE_TEXT_STATE.update({'睁开': 'open', '半闭': 'half', '闭合': 'closed'})
 
 
 # ---------------------------------------------------------------------------
-# 回调
+# Callbacks
 # ---------------------------------------------------------------------------
 class Reporter:
-    """进度与状态回调的默认实现；GUI 模式传入自定义实现以刷新界面。"""
+    """Default progress/status callbacks; GUI may supply a custom subclass."""
 
     def status(self, text):
-        """上报一条状态文本。"""
+        """Report one status line."""
         print(text)
 
     def progress(self, value):
-        """上报 0~100 的进度值。"""
+        """Report progress in 0..100."""
 
     def cancelled(self):
-        """是否被用户取消。"""
+        """Whether the user cancelled."""
         return False
 
 
 class SilentReporter(Reporter):
-    """静默回调，用于自动化测试。"""
+    """Silent callbacks for automated tests."""
 
     def status(self, text):
         pass
 
 
 # ---------------------------------------------------------------------------
-# 数据结构
+# Data structures
 # ---------------------------------------------------------------------------
 @dataclass
 class DialogueOptions:
-    """台词截图模式的可调参数。"""
+    """Tunable options for dialogue capture mode."""
 
-    subtitle_track: str = 'auto'      # 'auto' 或字幕轨名称关键字
+    subtitle_track: str = 'auto'      # 'auto' or subtitle-track name keyword
     candidate_min: int = config.CANDIDATE_MIN
     candidate_max: int = config.CANDIDATE_MAX
     candidate_fps: float = config.CANDIDATE_FPS
-    burn_subtitle: bool = True        # 是否把台词渲染到图片底部
-    start_cue: int = 1                # 从第几句开始（便于抽样试跑）
-    max_cues: int = 0                 # 最多处理几句，0 表示全部
-    resume: bool = True               # 断点续跑：已存在图片则跳过
-    clean: bool = False               # 重建：先清空输出目录中的历史图片与索引
-    eye_refine: str = 'closed'        # 闭眼重采样口径：closed / half / off
-    story_gaps: bool = True           # 补截剧情延续帧（台词之间的无台词空窗）
-    story_gap_min: float = config.STORY_GAP_MIN          # 空窗最短间隔（秒）
-    story_gap_max_per: int = config.STORY_GAP_MAX_PER_GAP    # 每空窗补截上限
+    burn_subtitle: bool = True        # burn dialogue text onto the image bottom
+    start_cue: int = 1                # first cue index (for sample runs)
+    max_cues: int = 0                 # max cues to process; 0 = all
+    resume: bool = True               # skip cues that already have an image
+    clean: bool = False               # rebuild: clear prior images + index first
+    eye_refine: str = 'closed'        # eye-refine mode: closed / half / off
+    story_gaps: bool = True           # capture story-gap frames between cues
+    story_gap_min: float = config.STORY_GAP_MIN          # min gap length (seconds)
+    story_gap_max_per: int = config.STORY_GAP_MAX_PER_GAP    # max frames per gap
     write_index: bool = True
     write_report: bool = True
 
 
 @dataclass
 class EpisodeResult:
-    """单集处理结果。"""
+    """Per-episode processing result."""
 
     video: str = ''
     output_dir: str = ''
@@ -105,31 +98,31 @@ class EpisodeResult:
     failed: int = 0
     elapsed: float = 0.0
     rows: list = field(default_factory=list)
-    backfill_rows: list = field(default_factory=list)   # 断点续跑跳过、需补回索引的记录
+    backfill_rows: list = field(default_factory=list)   # skipped (resume) rows for index fill
     errors: list = field(default_factory=list)
     face_backend: str = ''
-    style_source: str = ''            # 样式基线来源（参考素材统计结果）
-    cleaned_images: int = 0           # 重建时清理掉的旧图片数量
-    integrity_missing: int = 0        # 完整性校验发现缺失的句数
-    refilled: int = 0                 # 校验后补跑补齐的句数
-    eye_open: int = 0                 # 出图帧中眼睛睁开（合格）的句数
-    eye_half: int = 0                 # 出图帧中眼睛半闭的句数（含单眼微闭）
-    eye_closed: int = 0               # 出图帧中眼睛闭合的句数（整句无更好选择时的兜底）
-    eye_unknown: int = 0              # 无有效人脸、无法判定眼睛状态的句数
-    eye_refined: int = 0              # 因闭眼/半闭眼而重采样、且挑到更好一帧的句数
-    eye_refine_tried: int = 0         # 触发重采样的句数（含重采样后仍无改善的）
-    story_enabled: bool = False       # 本次是否执行了剧情延续帧补截
-    story_gap_min: float = 0.0        # 补截使用的空窗阈值（秒），供报告说明口径
-    story_gaps_total: int = 0         # 枚举出的无台词空窗数
-    story_frames: int = 0             # 本次补截的剧情延续帧张数
-    story_skipped: int = 0            # 已处理过而跳过的空窗数（含人工淘汰）
-    story_rows: list = field(default_factory=list)        # 剧情延续帧索引行
-    story_notes: list = field(default_factory=list)       # [(StoryGap, 状态说明), ...]
+    style_source: str = ''            # style baseline source (reference stats)
+    cleaned_images: int = 0           # old images removed on clean rebuild
+    integrity_missing: int = 0        # cues missing images after integrity check
+    refilled: int = 0                 # cues recovered by post-check refill
+    eye_open: int = 0                 # frames with open eyes (good)
+    eye_half: int = 0                 # frames with half-closed eyes
+    eye_closed: int = 0               # frames with closed eyes (fallback)
+    eye_unknown: int = 0              # no usable face; eye state unknown
+    eye_refined: int = 0              # cues improved by eye-refine resample
+    eye_refine_tried: int = 0         # cues that triggered eye refine
+    story_enabled: bool = False       # whether story-gap capture ran
+    story_gap_min: float = 0.0        # gap threshold used (seconds)
+    story_gaps_total: int = 0         # enumerated no-dialogue gaps
+    story_frames: int = 0             # story-gap frames captured this run
+    story_skipped: int = 0            # gaps skipped (already done / rejected)
+    story_rows: list = field(default_factory=list)        # story-gap index rows
+    story_notes: list = field(default_factory=list)       # [(StoryGap, note), ...]
 
 
 @dataclass
 class RunResult:
-    """整次运行结果。"""
+    """Full batch-run result."""
 
     input_dir: str = ''
     episodes: list = field(default_factory=list)
@@ -154,10 +147,10 @@ class RunResult:
 
 
 # ---------------------------------------------------------------------------
-# 路径与命名
+# Paths and naming
 # ---------------------------------------------------------------------------
 def episode_tag(video_path):
-    """从文件名提取集号标签，如 Love...S01E03....mkv -> S01E03。"""
+    """Extract episode tag from filename, e.g. Love...S01E03....mkv -> S01E03."""
     stem = os.path.splitext(os.path.basename(video_path))[0]
     match = _EPISODE_RE.search(stem)
     if match:
@@ -166,9 +159,10 @@ def episode_tag(video_path):
 
 
 def clean_output(output_dir, episode=None):
-    """清空输出目录中本工具产出的历史图片与索引（重建模式使用）。
+    """Remove this tool's prior images and index from output_dir (clean rebuild).
 
-    只删自己产出的文件，用户放在其中的其他文件保持不动；返回删除数量。
+    Only deletes our own artifacts; leaves other user files alone. Returns
+    the number of images removed.
     """
     if not os.path.isdir(output_dir):
         return 0
@@ -194,21 +188,21 @@ def clean_output(output_dir, episode=None):
 
 
 def derive_output_dir(video_dir):
-    """按「视频所在目录名 + -pc」推导输出目录。
+    """Derive output dir = episode folder basename + -pics.
 
-    例：...\\Love in the big City\\03 -> ...\\Love in the big City\\03\\03-pc
+    Example: ...\\your-show\\03 -> ...\\your-show\\03\\03-pics
     """
     video_dir = os.path.abspath(video_dir)
     return os.path.join(video_dir, os.path.basename(video_dir) + config.OUTPUT_SUFFIX)
 
 
 # ---------------------------------------------------------------------------
-# 目录扫描
+# Directory scan
 # ---------------------------------------------------------------------------
 def scan_directory(input_dir, max_depth=10, reporter=None):
-    """递归扫描输入目录。
+    """Recursively scan input_dir.
 
-    返回 (视频文件列表, 未完成文件列表, 无法识别的文件列表)。
+    Returns (video paths, incomplete files, unreadable files).
     """
     reporter = reporter or SilentReporter()
     videos, incomplete, unreadable = [], [], []
@@ -220,7 +214,7 @@ def scan_directory(input_dir, max_depth=10, reporter=None):
             dir_names[:] = []
             continue
 
-        # 跳过输出目录自身，避免把历史产物再扫一遍
+        # Skip our own -pics output dirs so prior artifacts are not re-scanned
         dir_names[:] = [
             name for name in dir_names
             if not name.endswith(config.OUTPUT_SUFFIX)
@@ -233,7 +227,7 @@ def scan_directory(input_dir, max_depth=10, reporter=None):
 
             if ffmpeg_utils.is_incomplete_file(path):
                 incomplete.append(path)
-                reporter.status('跳过未下载完成的文件：%s' % file_name)
+                reporter.status('skip incomplete download: %s' % file_name)
                 continue
 
             extension = os.path.splitext(file_name)[1].lower()
@@ -252,16 +246,16 @@ def scan_directory(input_dir, max_depth=10, reporter=None):
 
 
 # ---------------------------------------------------------------------------
-# 单集处理
+# Per-episode processing
 # ---------------------------------------------------------------------------
 def _sample_candidates(video_path, cue, options, work_dir):
-    """在台词区间内采样候选帧，返回 [(路径, 时间点秒), ...]。"""
+    """Sample candidate frames in the cue interval; return [(path, seconds), ...]."""
     duration = max(cue.duration, 0.12)
     desired = int(round(duration * options.candidate_fps))
     desired = max(options.candidate_min, min(options.candidate_max, desired))
     fps = desired / duration
 
-    # 清掉上一句的候选帧，避免混入本次打分
+    # Clear prior cue candidates so scoring is not polluted
     for name in os.listdir(work_dir):
         if name.startswith('cand_'):
             try:
@@ -281,7 +275,7 @@ def _sample_candidates(video_path, cue, options, work_dir):
 
 
 def _backfill_row(image_path, cue):
-    """为跳过（断点续跑）的台词生成索引记录：只填已知信息，不伪造分数。"""
+    """Index row for a skipped (resume) cue: known fields only, no fake scores."""
     name = os.path.basename(image_path)
     stamp = renderer.parse_image_timecode(name)
     return {
@@ -308,26 +302,26 @@ def _backfill_row(image_path, cue):
 
 
 def _format_eta(elapsed, done, total):
-    """根据已用时间估算剩余时间。"""
+    """Estimate remaining time from elapsed progress."""
     if done <= 0 or total <= 0:
         return ''
     remaining = elapsed / done * (total - done)
     if remaining < 60:
-        return '约 %d 秒' % int(remaining)
-    return '约 %.1f 分钟' % (remaining / 60.0)
+        return '~%d sec' % int(remaining)
+    return '~%.1f min' % (remaining / 60.0)
 
 
 def _count_eye_state(result, best):
-    """累计出图帧的眼睛状态，供报告与汇总展示。
+    """Accumulate eye-state counts for the report summary.
 
-    眼睛比嘴型更容易被一眼看出问题，因此报告里单独统计「睁开 / 半闭 / 闭合 /
-    无人像」，方便快速判断这批图有没有明显闭眼的废片。
+    Eyes are easier to spot-check than mouth shape, so the report tallies
+    open / half / closed / no-face separately.
     """
     _add_eye_state(result, best.eye_state, 1)
 
 
 def _add_eye_state(result, state, delta):
-    """按眼睛状态增减计数；重采样换图后需要用负的 delta 回退旧计数。"""
+    """Adjust eye-state counters; use negative delta when replacing a frame."""
     state = (state or '')
     if state == 'open':
         result.eye_open += delta
@@ -340,7 +334,7 @@ def _add_eye_state(result, state, delta):
 
 
 def _index_row(cue, best, image_name):
-    """把一句台词的处理结果整理成索引行（列与 renderer.INDEX_HEADER 对齐）。"""
+    """Build one index row aligned with renderer.INDEX_HEADER."""
     detail = best.detail or {}
     return {
         'index': cue.index,
@@ -355,33 +349,33 @@ def _index_row(cue, best, image_name):
         'motion_penalty': best.motion_penalty,
         'face_count': best.face_count,
         'eyes_open': ('' if 'eyes_closed' not in detail
-                      else ('否' if detail['eyes_closed'] else '是')),
+                      else (config.NO if detail['eyes_closed'] else config.YES)),
         'eye_state_text': _EYE_TEXT.get(detail.get('eye_state', ''), ''),
         'mouth_natural': ('' if 'mouth_too_open' not in detail
-                          else ('否' if detail['mouth_too_open'] else '是')),
+                          else (config.NO if detail['mouth_too_open'] else config.YES)),
         'speaking': _SPEAKING_TEXT.get(detail.get('speaking', ''), ''),
         'composition': best.composition_score,
         'timing': best.timing_score,
         'shot': best.shot_id,
-        'frame_type': '平坦画面' if best.flat else '正常画面',
+        'frame_type': 'flat' if best.flat else 'normal',
         'degraded': best.degraded,
     }
 
 
 def _process_cue(video_path, cue, options, analyzer, work_dir, output_dir, episode):
-    """处理单句台词：采样 -> 打分选优 -> 渲染落盘。
+    """Process one cue: sample -> score -> render.
 
-    返回 (索引行, 最优帧)；失败时抛 VideoToolError。抽成独立函数是为了让
-    完整性校验的补跑复用同一套流程，避免两处逻辑走偏。
+    Returns (index row, best frame); raises VideoToolError on failure.
+    Shared by the main loop and integrity refill so both paths stay identical.
     """
     candidates = _sample_candidates(video_path, cue, options, work_dir)
     if not candidates:
-        raise VideoToolError('未能抽取到候选帧')
+        raise VideoToolError('failed to extract candidate frames')
 
     scores = quality.score_candidates(candidates, analyzer)
     best = quality.select_best(scores)
     if best is None:
-        raise VideoToolError('候选帧全部读取失败')
+        raise VideoToolError('all candidate frames failed to load')
 
     image_name = renderer.build_image_name(episode, cue.index, best.timestamp)
     image_path = os.path.join(output_dir, image_name)
@@ -394,11 +388,10 @@ def _process_cue(video_path, cue, options, analyzer, work_dir, output_dir, episo
 
 
 def _integrity_state(output_dir, episode, selected, options):
-    """完整性校验的三量读数。
+    """Integrity check triad: expected indexes, present indexes, missing cues, index rows.
 
-    返回 (应有句序集合, 目录已有句序集合, 缺失台词列表, 索引行数)。
-    「三量」即字幕句数、目录内图片数、索引表行数：断点续跑、单句失败、
-    历史残留都会让这三者对不上，收尾时据此判定是否需要补跑。
+    Cue count, on-disk images, and index rows can diverge after resume, per-cue
+    failures, or leftover files; the wrap-up uses this to decide on refill.
     """
     expected = {cue.index for cue in selected}
     present = renderer.list_image_indexes(output_dir, episode)
@@ -410,18 +403,18 @@ def _integrity_state(output_dir, episode, selected, options):
 
 def _refill_missing_cues(video_path, missing, options, analyzer, work_dir, output_dir,
                          episode, result, failed_indexes, reporter):
-    """把「有台词却没有图片」的句子补跑一遍，返回补跑成功的句数。
+    """Re-run cues that have dialogue but no image; return successful refill count.
 
-    复用 _process_cue，保证补跑与正常流程完全同一条链路；补跑成功会把该句从
-    失败集合中移除，避免报告里「失败句数」被重复计数。
+    Reuses _process_cue so refill matches the normal path. Successful refills
+    are removed from failed_indexes to avoid double-counting failures.
     """
     refilled = 0
     for order, cue in enumerate(missing, start=1):
         if reporter.cancelled():
-            reporter.status('已取消，剩余缺失台词未补跑')
+            reporter.status('cancelled; remaining missing cues not refilled')
             break
 
-        prefix = '补跑 %d/%d（第 %d 句）' % (order, len(missing), cue.index)
+        prefix = 'refill %d/%d (cue %d)' % (order, len(missing), cue.index)
         try:
             row, best = _process_cue(video_path, cue, options, analyzer,
                                      work_dir, output_dir, episode)
@@ -432,20 +425,20 @@ def _refill_missing_cues(video_path, missing, options, analyzer, work_dir, outpu
             _count_eye_state(result, best)
             failed_indexes.discard(cue.index)
             refilled += 1
-            reporter.status('%s 完成：%s' % (prefix, row['image']))
+            reporter.status('%s done: %s' % (prefix, row['image']))
         except VideoToolError as exc:
             failed_indexes.add(cue.index)
-            result.errors.append('第 %d 句（补跑）：%s' % (cue.index, exc))
-            reporter.status('%s 失败：%s' % (prefix, exc))
-        except Exception as exc:                      # 兜底，绝不中断整集
+            result.errors.append('cue %d (refill): %s' % (cue.index, exc))
+            reporter.status('%s failed: %s' % (prefix, exc))
+        except Exception as exc:                      # catch-all; never abort the episode
             failed_indexes.add(cue.index)
-            result.errors.append('第 %d 句（补跑）：未预期错误 %s' % (cue.index, exc))
-            reporter.status('%s 出现未预期错误：%s' % (prefix, exc))
+            result.errors.append('cue %d (refill): unexpected error %s' % (cue.index, exc))
+            reporter.status('%s unexpected error: %s' % (prefix, exc))
     return refilled
 
 
 def _remove_quietly(path):
-    """删除文件，不存在或无权限时静默跳过（收尾清理不应影响主流程）。"""
+    """Delete a file; ignore missing/permission errors (cleanup must not abort)."""
     try:
         if path and os.path.isfile(path):
             os.remove(path)
@@ -454,7 +447,7 @@ def _remove_quietly(path):
 
 
 def _replace_row(result, old_row, new_row):
-    """把索引行列表中的旧记录替换为新记录（按行对象身份定位）。"""
+    """Replace an index-row object in result.rows by identity."""
     for position, row in enumerate(result.rows):
         if row is old_row:
             result.rows[position] = new_row
@@ -463,7 +456,7 @@ def _replace_row(result, old_row, new_row):
 
 
 def _retry_options(options):
-    """重采样用的参数副本：只提高候选帧数与采样密度，其余口径与正常流程一致。"""
+    """Copy of options for eye refine: denser sampling only; same scoring policy."""
     return dataclass_replace(
         options,
         candidate_max=max(options.candidate_max, config.EYE_REFINE_CANDIDATE_MAX),
@@ -472,7 +465,7 @@ def _retry_options(options):
 
 
 def _eye_refine_targets(result, cues_by_index, mode):
-    """挑出需要重采样的台词：本次出图帧的眼睛状态落在重采样口径内。"""
+    """Cues whose chosen frame eye state falls within the refine mode."""
     targets = []
     for row in result.rows:
         state = _EYE_TEXT_STATE.get(row.get('eye_state_text', ''), '')
@@ -486,15 +479,15 @@ def _eye_refine_targets(result, cues_by_index, mode):
 
 def _eye_refine(video_path, cues_by_index, options, analyzer, work_dir, output_dir,
                 episode, result, reporter):
-    """对「整句候选都没睁眼」的句子提高候选帧数重采样一次，尽量换成睁眼帧。
+    """Resample cues with no open-eye candidate using denser sampling.
 
-    触发依据是本次出图帧的眼睛状态：quality.select_best 已把闭眼帧排除在候选池外，
-    仍被选中说明这一句的所有候选帧都不合格（多为眨眼瞬间恰好被采样命中）。这类
-    句子每集通常只有个位数，把候选帧数与采样密度临时提高再挑一次的成本可以忽略，
-    却能明显减少闭眼废片。
+    Triggered by the chosen frame's eye state: select_best already excludes
+    closed-eye frames from the pool, so a closed pick means every candidate
+    failed. These cues are usually few per episode; a denser second pass is
+    cheap and cuts closed-eye rejects.
 
-    重采样后只有在「眼睛状态确实变好」时才替换图片与索引行；未变好则删除新图、
-    保留原图，保证一句仍然只有一张图。
+    Replace image + index row only when eye state improves; otherwise delete
+    the new image and keep the original so each cue still has one file.
     """
     mode = options.eye_refine or 'off'
     if mode not in config.EYE_REFINE_MODES:
@@ -511,26 +504,26 @@ def _eye_refine(video_path, cues_by_index, options, analyzer, work_dir, output_d
     refined = 0
     for order, (cue, row, state) in enumerate(targets, start=1):
         if reporter.cancelled():
-            reporter.status('已取消，剩余闭眼句未重采样')
+            reporter.status('cancelled; remaining eye-refine cues skipped')
             break
 
-        prefix = '重采样 %d/%d（第 %d 句，原状态：%s）' % (
-            order, len(targets), cue.index, _EYE_TEXT.get(state, '未判定'))
+        prefix = 'eye refine %d/%d (cue %d, was: %s)' % (
+            order, len(targets), cue.index, _EYE_TEXT.get(state, 'unknown'))
 
         try:
             new_row, best = _process_cue(video_path, cue, retry_options, analyzer,
                                          work_dir, output_dir, episode)
-        except Exception as exc:                      # 兜底，绝不中断整集
-            result.errors.append('第 %d 句（重采样）：%s' % (cue.index, exc))
-            reporter.status('%s 失败：%s' % (prefix, exc))
+        except Exception as exc:                      # catch-all; never abort the episode
+            result.errors.append('cue %d (eye refine): %s' % (cue.index, exc))
+            reporter.status('%s failed: %s' % (prefix, exc))
             continue
 
         improved = quality.eye_rank(best.eye_state) > quality.eye_rank(state)
         if not improved:
-            # 重采样没挑到更好的帧：删掉这张多余的新图，保留原图，避免一句两张
+            # No better frame: drop the extra image and keep the original
             if new_row['image'] != row['image']:
                 _remove_quietly(os.path.join(output_dir, new_row['image']))
-            reporter.status('%s 无改善，保留原图' % prefix)
+            reporter.status('%s no improvement; keep original' % prefix)
             continue
 
         if new_row['image'] != row['image']:
@@ -545,15 +538,15 @@ def _eye_refine(video_path, cues_by_index, options, analyzer, work_dir, output_d
             result.degraded -= 1
 
         refined += 1
-        reporter.status('%s 已更换：%s（眼睛 %s，得分 %.2f）' % (
+        reporter.status('%s replaced: %s (eye %s, score %.2f)' % (
             prefix, new_row['image'],
-            _EYE_TEXT.get(best.eye_state or '', '未判定'), best.total))
+            _EYE_TEXT.get(best.eye_state or '', 'unknown'), best.total))
 
     return refined
 
 
 def process_video(video_path, options=None, reporter=None):
-    """处理单个视频：解析台词 -> 逐句选优 -> 渲染落盘 -> 输出索引与报告。"""
+    """Process one video: cues -> pick frames -> render -> index + report."""
     options = options or DialogueOptions()
     reporter = reporter or SilentReporter()
 
@@ -562,49 +555,49 @@ def process_video(video_path, options=None, reporter=None):
 
     result = EpisodeResult(video=video_path, output_dir=output_dir)
     started = time.time()
-    # 候选帧放系统临时目录：输出目录里若堆上几百张临时帧，容易被清理工具误删，
-    # 也会让 -pc 目录在浏览器里出现几百张一闪而过的图片。
+    # Candidate frames go to a system temp dir so the -pics folder is not
+    # flooded with hundreds of temporary frames that cleanup tools may delete.
     work_dir = tempfile.mkdtemp(prefix='video_tool_cand_')
 
     try:
-        reporter.status('正在读取轨道信息：%s' % os.path.basename(video_path))
+        reporter.status('reading streams: %s' % os.path.basename(video_path))
         streams = ffmpeg_utils.probe_streams(video_path)
         if not streams:
-            raise VideoToolError('无法读取视频轨道信息')
+            raise VideoToolError('cannot read video stream info')
 
-        reporter.status('正在导出中文字幕轨…')
+        reporter.status('exporting subtitle track…')
         cues, subtitle_info = subtitles.load_cues(
             video_path, streams, options.subtitle_track, work_dir
         )
         result.subtitle_info = subtitle_info
         if not cues:
-            raise VideoToolError('字幕轨解析后没有任何台词')
+            raise VideoToolError('subtitle track has no cues after parse')
 
         selected = cues[options.start_cue - 1:]
         if options.max_cues and options.max_cues > 0:
             selected = selected[:options.max_cues]
         if not selected:
-            raise VideoToolError('指定的句序范围没有台词（共 %d 句）' % len(cues))
+            raise VideoToolError('no cues in selected range (total %d)' % len(cues))
 
         result.total_cues = len(cues)
         result.planned_cues = len(selected)
         reporter.status(
-            '共 %d 句台词，本次处理第 %d~%d 句'
+            '%d cues total; processing cues %d~%d'
             % (len(cues), selected[0].index, selected[-1].index)
         )
 
         analyzer = quality.FaceAnalyzer()
         result.face_backend = analyzer.describe()
         result.style_source = style_profile.load_style_profile().source
-        reporter.status('人像分析：%s' % result.face_backend)
-        reporter.status('台词样式基线：%s' % result.style_source)
+        reporter.status('face backend: %s' % result.face_backend)
+        reporter.status('style profile: %s' % result.style_source)
 
         episode = episode_tag(video_path)
 
         if options.clean:
-            # 重建：先清掉本集历史图片与旧索引，避免新旧样式混在同一目录里
+            # Rebuild: clear prior episode images + index to avoid mixed styles
             result.cleaned_images = clean_output(output_dir, episode)
-            reporter.status('重建模式：已清空 %d 张历史图片与旧索引' % result.cleaned_images)
+            reporter.status('clean rebuild removed %d images (+ index)' % result.cleaned_images)
 
         total = len(selected)
         loop_started = time.time()
@@ -612,10 +605,10 @@ def process_video(video_path, options=None, reporter=None):
 
         for position, cue in enumerate(selected, start=1):
             if reporter.cancelled():
-                reporter.status('已取消，剩余台词未处理')
+                reporter.status('cancelled; remaining cues not processed')
                 break
 
-            prefix = '第 %d/%d 句' % (position, total)
+            prefix = 'cue %d/%d' % (position, total)
 
             if options.resume:
                 existing = renderer.find_existing_image(output_dir, episode, cue.index)
@@ -624,7 +617,7 @@ def process_video(video_path, options=None, reporter=None):
                     result.backfill_rows.append(
                         _backfill_row(existing, cue)
                     )
-                    reporter.status('%s 已存在，跳过（断点续跑）' % prefix)
+                    reporter.status('%s exists, skip (resume)' % prefix)
                     reporter.progress(position / float(total) * 100.0)
                     continue
 
@@ -638,26 +631,26 @@ def process_video(video_path, options=None, reporter=None):
                 _count_eye_state(result, best)
 
                 reporter.status(
-                    '%s 完成：%s（得分 %.2f，人脸 %d，眼睛 %s）'
+                    '%s done: %s (score %.2f, faces %d, eyes %s)'
                     % (prefix, row['image'], best.total, best.face_count,
-                       _EYE_TEXT.get(best.eye_state or '', '未判定'))
+                       _EYE_TEXT.get(best.eye_state or '', 'unknown'))
                 )
             except VideoToolError as exc:
                 failed_indexes.add(cue.index)
-                result.errors.append('第 %d 句：%s' % (cue.index, exc))
-                reporter.status('%s 失败：%s' % (prefix, exc))
-            except Exception as exc:                      # 兜底，绝不中断整集
+                result.errors.append('cue %d: %s' % (cue.index, exc))
+                reporter.status('%s failed: %s' % (prefix, exc))
+            except Exception as exc:                      # catch-all; never abort the episode
                 failed_indexes.add(cue.index)
-                result.errors.append('第 %d 句：未预期错误 %s' % (cue.index, exc))
-                reporter.status('%s 出现未预期错误：%s' % (prefix, exc))
+                result.errors.append('cue %d: unexpected error %s' % (cue.index, exc))
+                reporter.status('%s unexpected error: %s' % (prefix, exc))
 
             reporter.progress(position / float(total) * 100.0)
             elapsed_loop = time.time() - loop_started
             eta = _format_eta(elapsed_loop, position, total)
             if eta:
-                reporter.status('%s 已处理，预计剩余 %s' % (prefix, eta))
+                reporter.status('%s done, ETA %s' % (prefix, eta))
 
-        # 闭眼废片重采样：整句候选都没睁眼的句子，提高候选帧数再挑一次
+        # Eye refine: denser resample for cues with no open-eye candidate
         if options.eye_refine and options.eye_refine != 'off':
             cues_by_index = {cue.index: cue for cue in selected}
             result.eye_refined = _eye_refine(
@@ -666,37 +659,37 @@ def process_video(video_path, options=None, reporter=None):
             )
             if result.eye_refine_tried:
                 reporter.status(
-                    '闭眼重采样：%d 句触发，%d 句换成更好的眼睛状态'
+                    'eye refine: %d triggered, %d improved'
                     % (result.eye_refine_tried, result.eye_refined)
                 )
 
-        # 收尾校验：字幕句数 / 目录图片数 / 索引行数三量对齐，缺图的句子补跑
+        # Wrap-up: align cue count / on-disk images / index rows; refill gaps
         expected, present, missing, indexed = _integrity_state(
             output_dir, episode, selected, options
         )
         result.integrity_missing = len(missing)
         reporter.status(
-            '完整性校验：台词 %d 句，本次应有 %d 张，目录内 %d 张，索引 %d 行'
+            'integrity: %d cues, expect %d images this run, %d on disk, %d index rows'
             % (len(cues), len(expected), len(present & expected), indexed)
         )
         if missing:
-            reporter.status('发现 %d 句缺少图片，开始补跑…' % len(missing))
+            reporter.status('%d cues missing images; refilling…' % len(missing))
             result.refilled = _refill_missing_cues(
                 video_path, missing, options, analyzer, work_dir, output_dir,
                 episode, result, failed_indexes, reporter,
             )
-            reporter.status('补跑完成：补出 %d 张，仍缺 %d 句'
+            reporter.status('refill done: +%d images, still missing %d'
                             % (result.refilled, len(missing) - result.refilled))
         result.failed = len(failed_indexes)
 
-        # 剧情延续帧：台词之间的沉默画面（反应镜头、物件特写、回忆闪回）同样
-        # 承载剧情，按无台词空窗系统化补截，替代人工 ffmpeg 抽帧排查。
-        # 抽样试跑（只处理部分台词）时不补截，避免试跑目录里混入全量剧情帧。
+        # Story-gap frames: silent stretches between cues (reactions, inserts,
+        # flashbacks) also carry plot; capture systematically instead of ad-hoc
+        # ffmpeg. Skip on sample runs so trial folders stay free of full-run frames.
         if options.story_gaps and result.planned_cues >= result.total_cues:
             try:
                 duration = ffmpeg_utils.probe_duration(video_path)
             except VideoToolError as exc:
-                result.errors.append('剧情延续帧：%s' % exc)
+                result.errors.append('story-gap frames: %s' % exc)
                 duration = 0.0
             if duration > 0:
                 gaps = story_gaps.compute_gaps(cues, duration, options.story_gap_min)
@@ -704,7 +697,7 @@ def process_video(video_path, options=None, reporter=None):
                 result.story_gap_min = options.story_gap_min
                 result.story_gaps_total = len(gaps)
                 reporter.status(
-                    '剧情延续帧：发现 %d 个无台词空窗（间隔 ≥ %.1f 秒，含片头/片尾）'
+                    'story gaps: %d no-dialogue gaps (interval >= %.1f s, incl. open/end)'
                     % (len(gaps), options.story_gap_min)
                 )
                 story_rows, notes, story_stats = story_gaps.capture_story_frames(
@@ -717,7 +710,7 @@ def process_video(video_path, options=None, reporter=None):
                 result.story_frames = story_stats['captured']
                 result.story_skipped = story_stats['skipped']
                 reporter.status(
-                    '剧情延续帧：补截 %d 张，跳过已处理空窗 %d 个'
+                    'story gaps: captured %d, skipped %d already-handled gaps'
                     % (result.story_frames, result.story_skipped)
                 )
 
@@ -725,10 +718,10 @@ def process_video(video_path, options=None, reporter=None):
             index_path = os.path.join(output_dir, config.INDEX_CSV_NAME)
             if result.rows:
                 renderer.write_index_csv(result.rows, index_path)
-            # 被跳过的台词没有评分数据，但索引表要覆盖整集图片
+            # Skipped cues lack scores but the index should cover the episode
             if result.backfill_rows:
                 renderer.fill_index_gaps(result.backfill_rows, index_path)
-            # 剧情延续帧行只补缺失的记录，不动历史行（含人工淘汰的台账行）
+            # Story-gap rows fill missing entries only; leave historical rows alone
             if result.story_rows:
                 renderer.fill_index_gaps(result.story_rows, index_path)
 
@@ -743,75 +736,70 @@ def process_video(video_path, options=None, reporter=None):
 
 
 def _write_episode_report(result, reporter):
-    """输出单集处理报告。"""
-    # 三量对齐：本次应出图数量（成功 + 跳过 + 补跑）是否覆盖全部台词
+    """Write per-episode report."""
     expected_images = result.success + result.skipped + result.refilled
     aligned = (expected_images >= result.total_cues
                and result.integrity_missing == 0
                and result.failed == 0)
     sampled = result.planned_cues < result.total_cues
     if sampled:
-        verdict = ('抽样试跑（本次只处理 %d/%d 句，只用于确认样式与画面，'
-                   '确认后再全量重跑）' % (result.planned_cues, result.total_cues))
+        verdict = ('SAMPLE RUN (%d/%d cues — confirm style then full run)'
+                   % (result.planned_cues, result.total_cues))
     elif aligned and result.success == 0:
-        verdict = '无新增（图片均已存在，如需重出请使用重建模式）'
+        verdict = 'NO NEW IMAGES (all existed; use --clean to rebuild)'
     elif aligned and result.eye_closed == 0:
-        verdict = '通过（图片数 / 索引行数 / 台词句数三方对齐，无闭眼废片）'
+        verdict = 'PASS (counts aligned, no closed-eye frames)'
     elif aligned and result.eye_closed:
-        verdict = ('基本通过（三量对齐；仍有 %d 张闭眼帧：重采样后整句候选依旧无睁眼帧，'
-                   '多为低头/闭眼喝水等剧情动作，建议目检）' % result.eye_closed)
+        verdict = ('PASS with review (%d closed-eye frames remain; spot-check)'
+                   % result.eye_closed)
     elif aligned:
-        verdict = '通过（三量对齐）'
+        verdict = 'PASS (counts aligned)'
     else:
-        verdict = '需人工复核（见上方失败明细与缺失数）'
+        verdict = 'NEEDS REVIEW (see failures / missing above)'
 
     lines = [
-        '台词智能截图 - 处理报告',
+        'Dialogue capture - report',
         '=' * 46,
-        '视频文件：%s' % os.path.basename(result.video),
-        '输出目录：%s' % result.output_dir,
-        '字幕轨　：%s' % result.subtitle_info,
-        '人像分析：%s' % result.face_backend,
-        '样式基线：%s' % (result.style_source or '内置默认值'),
+        'Video: %s' % os.path.basename(result.video),
+        'Output: %s' % result.output_dir,
+        'Subtitle track: %s' % result.subtitle_info,
+        'Face backend: %s' % result.face_backend,
+        'Style profile: %s' % (result.style_source or 'built-in defaults'),
         '',
-        '台词总句数：%d' % result.total_cues,
-        '本次处理　：%d 句' % result.planned_cues,
-        '成功出图　：%d 张' % result.success,
-        '其中降级　：%d 张（无人像 / 平坦画面 / 整体低分，属正常保留）' % result.degraded,
-        '跳过已存在：%d 张（断点续跑）' % result.skipped,
-        '处理失败　：%d 句' % result.failed,
-        '耗时　　　：%.1f 秒' % result.elapsed,
+        'Total cues: %d' % result.total_cues,
+        'Processed this run: %d' % result.planned_cues,
+        'Success: %d' % result.success,
+        'Degraded: %d (no face / flat / low score — kept)' % result.degraded,
+        'Skipped existing: %d (resume)' % result.skipped,
+        'Failed: %d' % result.failed,
+        'Elapsed: %.1f s' % result.elapsed,
         '',
-        '完整性校验：',
-        '  发现缺失　：%d 句（有台词但目录内没有对应图片）' % result.integrity_missing,
-        '  自动补跑　：%d 张' % result.refilled,
+        'Integrity:',
+        '  Missing: %d' % result.integrity_missing,
+        '  Auto-refilled: %d' % result.refilled,
         '',
-        '人像与眼睛（本次新生成 %d 张）：' % (result.eye_open + result.eye_half
+        'Faces / eyes (new this run: %d):' % (result.eye_open + result.eye_half
                                               + result.eye_closed + result.eye_unknown),
-        '  眼睛睁开　：%d 张' % result.eye_open,
-        '  眼睛半闭　：%d 张（含单眼微闭；已优先避开，仅在整句没有更优帧时出现）'
-        % result.eye_half,
-        '  眼睛闭合　：%d 张（整句候选都闭眼：多为低头/闭眼喝水/闭眼摇头等剧情动作）' % result.eye_closed,
-        '  无人像　　：%d 张（空镜 / 背影 / 远景 / 字幕卡，无法判定眼睛）'
-        % result.eye_unknown,
+        '  open: %d' % result.eye_open,
+        '  half: %d' % result.eye_half,
+        '  closed: %d' % result.eye_closed,
+        '  no face: %d' % result.eye_unknown,
         '',
-        '逐集验收：',
-        '  三量核对　：台词 %d 句 ／ 本次应出图 %d 张（成功 %d + 跳过 %d + 补跑 %d）／ 失败 %d 句'
+        'Episode check:',
+        '  Counts: cues %d / expected %d (ok %d + skip %d + refill %d) / failed %d'
         % (result.total_cues, expected_images, result.success, result.skipped,
            result.refilled, result.failed),
-        '  结论　　　：%s' % verdict,
-        '  说明　　　：降级 %d 张为无人像空镜 / 平坦画面，属正常保留；'
-        % result.degraded,
-        '  　　　　　　目检建议：抽看「有人脸且眼睛状态=睁开」与「无人像」各一张；'
-        '若「半闭」偏多，可加 --eye-refine half 后重跑该集（半闭句也重采样）。',
+        '  Verdict: %s' % verdict,
+        '  Note: %d degraded frames are normal.' % result.degraded,
+        '  Spot-check open-eye and no-face images; use --eye-refine half if needed.',
     ]
 
     if result.eye_refine_tried:
         anchor = next(
-            (position for position, text in enumerate(lines) if text.startswith('  无人像')),
+            (position for position, text in enumerate(lines) if text.startswith('  no face')),
             None,
         )
-        refine_line = ('  重采样换帧：%d 句（触发 %d 句；提高候选帧数后挑到更好的眼睛状态）'
+        refine_line = ('  eye refine: %d improved of %d triggered'
                        % (result.eye_refined, result.eye_refine_tried))
         if anchor is None:
             lines.append(refine_line)
@@ -821,30 +809,27 @@ def _write_episode_report(result, reporter):
     if result.story_enabled:
         story_lines = [
             '',
-            '剧情延续帧（无台词空窗补截，需人工复核去留）：',
-            '  空窗总数　：%d 个（相邻台词间隔 ≥ %.1f 秒，含片头/片尾）'
+            'Story-gap frames (human review required):',
+            '  Gaps: %d (interval >= %.1f s)'
             % (result.story_gaps_total, result.story_gap_min),
-            '  本次补截　：%d 张（句序 0004a/b/c…，与台词图按 4 位序号穿插）'
-            % result.story_frames,
-            '  跳过空窗　：%d 个（此前已补截或已人工淘汰）' % result.story_skipped,
+            '  Captured this run: %d' % result.story_frames,
+            '  Skipped gaps: %d' % result.story_skipped,
         ]
         if result.story_notes:
-            story_lines.append('  空窗明细：')
+            story_lines.append('  Gap details:')
             story_lines.extend(
-                '    - %s ~ %s（%.1f 秒）：%s'
+                '    - %s ~ %s (%.1f s): %s'
                 % (subtitles.format_timecode(gap.start),
                    subtitles.format_timecode(gap.end),
                    gap.duration, note)
                 for gap, note in result.story_notes
             )
         story_lines.extend([
-            '  复核建议　：按文件名字母序看一遍 0004a/0004b… 等剧情帧，',
-            '  　　　　　　删除与剧情无关的画面（图片 + 索引行）；只删图片时行保留',
-            '  　　　　　　为台账，重跑不会重补；连行一起删则可让该空窗重新补截。',
+            '  Review tip: browse 0004a/b by name; empty filename = ledger.',
         ])
         anchor = next(
             (position for position, text in enumerate(lines)
-             if text.startswith('人像与眼睛')),
+             if text.startswith('Faces / eyes')),
             None,
         )
         if anchor is None:
@@ -853,46 +838,48 @@ def _write_episode_report(result, reporter):
             lines[anchor:anchor] = story_lines
 
     if result.cleaned_images:
-        lines.insert(8, '重建清理　：%d 张历史图片（含旧索引）' % result.cleaned_images)
+        lines.insert(8, 'Clean rebuild removed: %d old images' % result.cleaned_images)
 
     if result.errors:
         lines.append('')
-        lines.append('失败明细：')
+        lines.append('Failures:')
         lines.extend('  - %s' % item for item in result.errors[:50])
         if len(result.errors) > 50:
-            lines.append('  ...（共 %d 条，其余略）' % len(result.errors))
+            lines.append('  ... (%d total, truncated)' % len(result.errors))
 
     lines.append('')
-    lines.append('提示：再次运行会自动跳过已生成的图片，可直接断点续跑。')
+    lines.append('Tip: re-run skips existing images (resume).')
 
     path = os.path.join(result.output_dir, config.REPORT_NAME)
     renderer.write_report(lines, path)
-    reporter.status('报告已写入：%s' % path)
+    reporter.status('Report written: %s' % path)
+
 
 
 # ---------------------------------------------------------------------------
-# 整目录处理
+# Batch run
 # ---------------------------------------------------------------------------
 def run(input_dir, options=None, reporter=None, max_depth=10):
-    """处理输入目录中的全部视频，每个视频输出到其所在目录的 <目录名>-pc 下。"""
+    """Process all videos under input_dir; each writes to <basename>-pics."""
     options = options or DialogueOptions()
     reporter = reporter or SilentReporter()
 
     if not os.path.isdir(input_dir):
-        raise VideoToolError('输入目录不存在：%s' % input_dir)
+        raise VideoToolError('input directory not found: %s' % input_dir)
 
     run_result = RunResult(input_dir=input_dir)
-    reporter.status('正在扫描目录：%s' % input_dir)
+    reporter.status('scanning: %s' % input_dir)
 
     videos, incomplete, unreadable = scan_directory(input_dir, max_depth, reporter)
     run_result.incomplete_files = incomplete
     run_result.unreadable_files = unreadable
 
     if not videos:
-        reporter.status('未找到可处理的视频文件')
+        reporter.status('no processable video files found')
         if incomplete:
             reporter.status(
-                '发现 %d 个未下载完成的文件，请先下载完整：' % len(incomplete)
+                'found %d incomplete downloads; finish downloading first:'
+                % len(incomplete)
             )
             for path in incomplete:
                 reporter.status('  - %s' % ffmpeg_utils.describe_incomplete(path))
@@ -900,10 +887,10 @@ def run(input_dir, options=None, reporter=None, max_depth=10):
 
     for order, video_path in enumerate(videos, start=1):
         if reporter.cancelled():
-            reporter.status('已取消')
+            reporter.status('cancelled')
             break
         reporter.status(
-            '\n=== [%d/%d] 开始处理 %s ===' % (order, len(videos), os.path.basename(video_path))
+            '\n=== [%d/%d] processing %s ===' % (order, len(videos), os.path.basename(video_path))
         )
         try:
             run_result.episodes.append(process_video(video_path, options, reporter))
@@ -913,59 +900,59 @@ def run(input_dir, options=None, reporter=None, max_depth=10):
             episode.errors.append(str(exc))
             episode.failed = 1
             run_result.episodes.append(episode)
-            reporter.status('处理失败：%s' % exc)
+            reporter.status('failed: %s' % exc)
 
     return run_result
 
 
 def summarize(run_result):
-    """把运行结果整理为可打印的报告行，供命令行与 GUI 复用。"""
-    lines = ['台词智能截图 - 汇总', '=' * 46]
+    """Format run results as printable summary lines for CLI and GUI."""
+    lines = ['Dialogue capture - summary', '=' * 46]
     for episode in run_result.episodes:
-        lines.append('视频：%s' % os.path.basename(episode.video))
-        lines.append('  输出目录：%s' % episode.output_dir)
-        lines.append('  成功 %d 张（降级 %d 张）／跳过 %d 张／失败 %d 句／耗时 %.1f 秒'
+        lines.append('Video: %s' % os.path.basename(episode.video))
+        lines.append('  Output: %s' % episode.output_dir)
+        lines.append('  ok %d (degraded %d) / skipped %d / failed %d cues / %.1f s'
                      % (episode.success, episode.degraded, episode.skipped,
                         episode.failed, episode.elapsed))
-        lines.append('  完整性：台词 %d 句，缺图 %d 句，补跑 %d 张，样式基线 %s'
+        lines.append('  integrity: %d cues, missing %d, refilled %d, style %s'
                      % (episode.total_cues, episode.integrity_missing,
-                        episode.refilled, episode.style_source or '内置默认值'))
+                        episode.refilled, episode.style_source or 'built-in defaults'))
         covered = episode.success + episode.skipped + episode.refilled
         if episode.planned_cues < episode.total_cues:
-            verdict = '抽样试跑（%d/%d 句）' % (episode.planned_cues, episode.total_cues)
+            verdict = 'sample run (%d/%d cues)' % (episode.planned_cues, episode.total_cues)
         elif episode.failed == 0 and episode.integrity_missing == 0 and covered >= episode.total_cues:
-            verdict = '通过' if episode.success else '无新增（均为已存在图片）'
+            verdict = 'PASS' if episode.success else 'no new images (all existed)'
         else:
-            verdict = '需人工复核'
-        lines.append('  眼睛状态：睁开 %d 张／半闭 %d 张／闭合 %d 张／无人像 %d 张'
+            verdict = 'needs review'
+        lines.append('  eyes: open %d / half %d / closed %d / no-face %d'
                      % (episode.eye_open, episode.eye_half,
                         episode.eye_closed, episode.eye_unknown))
         if episode.eye_refine_tried:
-            lines.append('  重采样换帧：触发 %d 句，成功换帧 %d 句'
+            lines.append('  eye refine: %d triggered, %d improved'
                          % (episode.eye_refine_tried, episode.eye_refined))
         if episode.story_enabled:
-            lines.append('  剧情延续帧：空窗 %d 个，补截 %d 张，跳过已处理 %d 个'
+            lines.append('  story gaps: %d gaps, captured %d, skipped %d'
                          % (episode.story_gaps_total, episode.story_frames,
                             episode.story_skipped))
-        lines.append('  验收结论：%s（应出图 %d 张 / 台词 %d 句，失败 %d 句）'
+        lines.append('  verdict: %s (expected %d images / %d cues, failed %d)'
                      % (verdict, covered, episode.total_cues, episode.failed))
         if episode.cleaned_images:
-            lines.append('  重建清理：%d 张历史图片' % episode.cleaned_images)
+            lines.append('  clean rebuild removed: %d old images' % episode.cleaned_images)
     lines.append('')
-    lines.append('合计：成功 %d 张，降级 %d 张，跳过 %d 张，失败 %d 句，剧情延续帧 %d 张'
+    lines.append('Total: ok %d, degraded %d, skipped %d, failed %d cues, story-gap frames %d'
                  % (run_result.success, run_result.degraded,
                     run_result.skipped, run_result.failed,
                     sum(episode.story_frames for episode in run_result.episodes)))
 
     if run_result.incomplete_files:
         lines.append('')
-        lines.append('未下载完成（已跳过，请下载完整后再处理）：')
+        lines.append('Incomplete downloads (skipped; finish download then retry):')
         for path in run_result.incomplete_files:
             lines.append('  - %s' % ffmpeg_utils.describe_incomplete(path))
 
     if run_result.unreadable_files:
         lines.append('')
-        lines.append('无法识别的文件（已跳过）：')
+        lines.append('Unreadable files (skipped):')
         for path in run_result.unreadable_files:
             lines.append('  - %s' % os.path.basename(path))
 

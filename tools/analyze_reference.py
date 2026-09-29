@@ -1,15 +1,14 @@
 # -*- coding: utf-8 -*-
 """参考素材样式分析入口（命令行，可独立运行）
 
-扫描「素材3.0 / 3.1 / 3.2」中的人工截图，统计字幕字号、描边宽度、行距与贴底
-位置，产出项目根目录下的 style_profile.json，供台词渲染与评分消费。
+扫描参考目录中的人工截图，统计字幕字号、描边宽度、行距与贴底位置，
+产出项目根目录下的 style_profile.json，供台词渲染与评分消费。
 
 用法（在项目目录下执行）：
-    python tools/analyze_reference.py                      # 使用默认素材目录
-    python tools/analyze_reference.py --reference <目录>    # 指定素材目录
-    python tools/analyze_reference.py --group 素材3.0       # 只用其中一组素材
-    python tools/analyze_reference.py --limit 100           # 只统计前 N 张（试跑）
-    python tools/analyze_reference.py --print-only          # 只打印结果，不写文件
+    python tools/analyze_reference.py --reference <目录>    # 必填：参考素材根目录
+    python tools/analyze_reference.py --reference <目录> --group 素材组A
+    python tools/analyze_reference.py --reference <目录> --limit 100
+    python tools/analyze_reference.py --reference <目录> --print-only
 """
 
 import argparse
@@ -21,10 +20,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from video_tool import config, style_profile            # noqa: E402
 
-# 默认素材目录：本片源的人工截图，字幕样式以 素材3.0 为准
-DEFAULT_REFERENCE_DIR = r'D:\03_Knowledge\intimate\Love in the big City\素材3.0-3.2图片'
-# 字幕样式基准所在的素材组（其余组只参与统计参考）
-STYLE_BASELINE_GROUP = '素材3.0'
+# 未指定 --group 时，优先选用该组名作为样式基线（若目录中不存在则回退到第一组）
+STYLE_BASELINE_GROUP = 'reference'
 
 
 def collect_groups(reference_dir, group=None):
@@ -69,11 +66,11 @@ def print_summary(group, stats):
 
 def main():
     parser = argparse.ArgumentParser(description='统计参考素材的字幕样式并写出样式基线文件')
-    parser.add_argument('--reference', default=DEFAULT_REFERENCE_DIR,
-                        help='参考素材根目录，默认 %s' % DEFAULT_REFERENCE_DIR)
-    parser.add_argument('--group', default='', help='只统计指定子目录（如 素材3.0）')
-    parser.add_argument('--limit', type=int, default=0, help='每组最多统计多少张，0 表示全部')
-    parser.add_argument('--print-only', action='store_true', help='只打印，不写样式基线文件')
+    parser.add_argument('--reference', required=True,
+                        help='reference image root (required), e.g. ...\\your-show\\reference')
+    parser.add_argument('--group', default='', help='only scan this subdirectory')
+    parser.add_argument('--limit', type=int, default=0, help='max images per group; 0 = all')
+    parser.add_argument('--print-only', action='store_true', help='print only; do not write profile')
     args = parser.parse_args()
 
     started = time.time()

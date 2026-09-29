@@ -1,29 +1,26 @@
 # -*- coding: utf-8 -*-
-"""全局配置与默认参数
-
-集中存放各模块共享的常量与默认值，避免魔法数字散落在各处。
-"""
+"""Global configuration and shared defaults."""
 
 import os
 
 
 class VideoToolError(Exception):
-    """本项目自定义异常基类。"""
+    """Project-specific exception base class."""
 
 
 # ---------------------------------------------------------------------------
-# 应用信息
+# App info
 # ---------------------------------------------------------------------------
-APP_TITLE = "视频截图工具"
+APP_TITLE = "Video Pics Cut"
 APP_VERSION = "2.0"
-COPYRIGHT = "© 2025 一模型Ai (https://jmlovestore.com) - 不会开发软件吗 🙂 Ai会哦"
+COPYRIGHT = "© 2026-2028 Ourbeing (https://ourbeings.com) · MIT License"
 
 # ---------------------------------------------------------------------------
 # 外部可执行文件（FFmpeg / FFprobe）
 # ---------------------------------------------------------------------------
-# 找不到时按顺序在这些目录中搜索，最后回退到系统 PATH
+# 找不到时按顺序在这些目录中搜索，最后回退到系统 PATH。
+# 也可把 ffmpeg/bin 加入 PATH，或解压到下列任一常见位置。
 FFMPEG_SEARCH_DIRS = [
-    r"E:\Tools\ffmpeg\bin",
     r"C:\ffmpeg\bin",
     r"D:\ffmpeg\bin",
     r"C:\Program Files\ffmpeg\bin",
@@ -50,13 +47,14 @@ INCOMPLETE_EXTS = [
 ]
 
 # ---------------------------------------------------------------------------
-# 字幕与台词
+# Subtitles / dialogue
 # ---------------------------------------------------------------------------
-# 优先选用的字幕轨名称关键字（按顺序匹配，先简后繁）
+# Track-name keywords to prefer when selecting a soft subtitle track.
+# Chinese labels are intentional: many releases name tracks in Chinese.
 SUBTITLE_NAME_PREFERENCE = ["简体中文", "简体", "中文简体", "chs", "sc", "gb"]
-# 按语言码兜底（ISO639-2/B 与 ISO639-1）
+# Language-code fallback (ISO639-2/B and ISO639-1)
 SUBTITLE_LANG_PREFERENCE = ["zh", "chi", "zho", "chs", "cht"]
-# 可转换为文本的字幕编码；图像类字幕（PGS/VOBSUB）无法转 SRT
+# Text subtitle codecs that can be exported to SRT (not PGS/VobSub)
 TEXT_SUBTITLE_CODECS = [
     "subrip", "srt", "ass", "ssa", "mov_text",
     "webvtt", "text", "s_text/utf8",
@@ -186,7 +184,7 @@ def face_model_path():
 # ---------------------------------------------------------------------------
 # 样式基线（由参考素材统计得出）
 # ---------------------------------------------------------------------------
-# tools/analyze_reference.py 扫描「素材3.0-3.2图片」后在项目根目录写出该文件，
+# tools/analyze_reference.py 扫描参考图目录后在项目根目录写出该文件，
 # renderer 与 quality 共同读取，避免样式参数散落在代码里。
 STYLE_PROFILE_NAME = 'style_profile.json'
 
@@ -218,7 +216,7 @@ FACE_SCORE_WEIGHTS = {
 # ---------------------------------------------------------------------------
 # 台词渲染（图片底部）
 # ---------------------------------------------------------------------------
-# 粗体优先：素材3.0 的字幕是粗体描边字，常规字重明显偏细
+# 粗体优先：参考样式多为粗体描边字，常规字重会偏细
 FONT_CANDIDATES = [
     r"C:\Windows\Fonts\msyhbd.ttc",
     r"C:\Windows\Fonts\msyh.ttc",
@@ -226,7 +224,7 @@ FONT_CANDIDATES = [
     r"C:\Windows\Fonts\simsun.ttc",
 ]
 
-# 以下为「未找到样式基线文件」时的内置默认值，数值取自素材3.0 的统计中位数。
+# 以下为「未找到样式基线文件」时的内置默认值（与仓库自带 style_profile 同量级）。
 # 实际运行时优先采用 style_profile.json 中的统计结果。
 BOTTOM_BAND_RATIO = 0.26         # 台词允许占用的最大高度比例（超出则自动缩字号）
 FONT_SIZE_RATIO = 0.040          # 字号占画面高度比例
@@ -262,12 +260,67 @@ STORY_GAP_SUB_LETTERS = 'abcdefghijklmnopqrstuvwxyz'
 STORY_GAP_HEAD_INDEX = 0       # 片头空窗的占位序号（无 prev_cue 时使用）
 
 # ---------------------------------------------------------------------------
-# 输出规则
+# Output rules
 # ---------------------------------------------------------------------------
-OUTPUT_SUFFIX = "-pc"            # 输出目录 = 视频所在目录名 + 该后缀，如 03 -> 03-pc
+# Output dir = episode folder basename + this suffix, e.g. 03 -> 03-pics
+OUTPUT_SUFFIX = "-pics"
 IMAGE_FORMAT = "jpg"
 JPEG_QUALITY = 95
 
-# 索引与报告文件名
 INDEX_CSV_NAME = "_index.csv"
 REPORT_NAME = "_report.txt"
+AUDIT_CSV_NAME = "_audit.csv"
+
+# Index CSV column headers (English snake_case)
+INDEX_COLUMNS = [
+    "seq",
+    "start_tc",
+    "end_tc",
+    "duration_sec",
+    "dialogue",
+    "filename",
+    "frame_tc",
+    "score",
+    "sharpness",
+    "motion_penalty",
+    "face_count",
+    "eye_state",
+    "mouth_natural",
+    "speaking_state",
+    "composition_score",
+    "timing_score",
+    "shot_group",
+    "frame_type",
+    "degraded",
+]
+
+# CSV cell enums
+EYE_OPEN = "open"
+EYE_HALF = "half"
+EYE_CLOSED = "closed"
+SPEAKING = "speaking"
+SPEAKING_CLOSED = "closed"
+SPEAKING_TOO_OPEN = "too_open"
+YES = "yes"
+NO = "no"
+RECOMMEND_DELETE = "delete"
+RECOMMEND_REVIEW = "review"
+RECOMMEND_KEEP = "keep"
+
+AUDIT_COLUMNS = [
+    "recommendation",
+    "seq",
+    "filename",
+    "gap_start",
+    "gap_end",
+    "gap_duration",
+    "frame_tc",
+    "sharpness",
+    "frame_type",
+    "face_count",
+    "eye_state",
+    "prev_dialogue",
+    "next_dialogue",
+    "shot_group",
+    "flags",
+]

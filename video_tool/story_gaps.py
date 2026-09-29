@@ -52,10 +52,13 @@ class StoryGap:
                           subtitles.format_timecode(self.end))
 
 
-# 剧情帧的眼睛状态到索引表中文文案的映射（仅作复核参考，不参与选优）
-_EYE_TEXT = {'open': '睁开', 'half': '半闭', 'closed': '闭合'}
+_EYE_TEXT = {
+    'open': config.EYE_OPEN,
+    'half': config.EYE_HALF,
+    'closed': config.EYE_CLOSED,
+}
 
-_KIND_LABEL = {'head': '片头', 'gap': '句间', 'tail': '片尾'}
+_KIND_LABEL = {'head': 'head', 'gap': 'gap', 'tail': 'tail'}
 
 
 def make_story_seq(prev_cue_index, sub_letter):
@@ -104,30 +107,30 @@ def compute_gaps(cues, duration, min_gap=None):
 
 
 def gap_text(gap):
-    """空窗的索引描述：位置 + 前后台词摘录，供人工复核时判断剧情上下文。"""
+    """Index dialogue text for a story gap: kind + neighboring cue snippets."""
     parts = []
     if gap.prev_cue is not None:
-        parts.append('前接第 %d 句「%s」'
+        parts.append('prev cue %d "%s"'
                      % (gap.prev_cue.index, _snippet(gap.prev_cue.text)))
     if gap.next_cue is not None:
-        parts.append('后接第 %d 句「%s」'
+        parts.append('next cue %d "%s"'
                      % (gap.next_cue.index, _snippet(gap.next_cue.text)))
     if gap.kind == 'head':
-        label = '片头无台词空窗'
+        label = 'head gap (no dialogue)'
     elif gap.kind == 'tail':
-        label = '片尾无台词空窗'
+        label = 'tail gap (no dialogue)'
     else:
-        label = '句间无台词空窗'
+        label = 'mid gap (no dialogue)'
     if parts:
-        label += '（%s）' % '，'.join(parts)
+        label += ' (%s)' % '; '.join(parts)
     return label
 
 
 def _snippet(text, limit=14):
-    """台词摘录：取首行前若干字，供索引表里快速辨认上下文。"""
+    """Short first-line snippet for index context."""
     line = str(text or '').split('\n')[0].strip()
     if len(line) > limit:
-        return line[:limit] + '…'
+        return line[:limit] + '...'
     return line
 
 
@@ -216,7 +219,7 @@ def _capture_one_gap(video_path, gap, analyzer, work_dir, output_dir, episode_ta
 
     scores = quality.score_candidates(candidates, analyzer)
     if not scores:
-        return [], '候选帧全部读取失败'
+        return [], 'all candidate frames failed to load'
 
     usable = [item for item in scores if not item.flat]
     if not usable:
@@ -285,7 +288,7 @@ def capture_story_frames(video_path, gaps, analyzer, work_dir, output_dir, episo
                 max_per_gap,
             )
         except Exception as exc:                      # 兜底，绝不中断整集
-            notes.append((gap, '补截失败：%s' % exc))
+            notes.append((gap, 'capture failed: %s' % exc))
             continue
 
         if reason:

@@ -18,10 +18,5 @@ mediapipe>=0.10.9,<2
 
 # 外部依赖（无法通过 pip 安装，需单独准备）：
 # FFmpeg / FFprobe —— 用于导出内嵌字幕与抽取候选帧。
-# 程序会按以下顺序自动查找，找不到才回退系统 PATH：
-#   E:\Tools\ffmpeg\bin
-#   C:\ffmpeg\bin
-#   D:\ffmpeg\bin
-#   C:\Program Files\ffmpeg\bin
-#   D:\Program Files\ffmpeg\bin
-# 也可以先把 ffmpeg/bin 加入系统环境变量 PATH。
+# 程序会在常见安装目录中搜索，找不到再回退系统 PATH。
+# 建议：把 ffmpeg/bin 加入 PATH，或解压到 C:\ffmpeg\bin 等位置。

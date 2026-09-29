@@ -22,3 +22,14 @@ Thumbs.db
 
 # 本地助手工作数据
 .codebuddy/
+
+# 大媒体与本地剧集素材（勿提交完整成片 / 全集截图）
+*.mkv
+*.mp4
+*.avi
+*.mov
+*.m4v
+*.webm
+*.ts
+*.flv
+*.wmv
