@@ -33,3 +33,6 @@ Thumbs.db
 *.ts
 *.flv
 *.wmv
+
+# 影片启蒙混剪短片（不是全集成片）
+!shows/love-in-the-big-city/our-being/mix/*.mp4
