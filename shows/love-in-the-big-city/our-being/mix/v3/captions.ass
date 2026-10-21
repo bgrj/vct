@@ -8,8 +8,8 @@ YCbCr Matrix: TV.709
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Quote,Noto Sans SC,72,&H00EFEFEF,&H00EFEFEF,&H00303030,&H00000000,0,0,0,0,100,100,1,0,1,0.6,0,2,110,110,42,1
-Style: Theme,Noto Sans SC,80,&H00E7E5E2,&H00E7E5E2,&H00303030,&H00000000,0,0,0,0,100,100,2,0,1,0.6,0,2,110,110,48,1
+Style: Quote,Noto Sans CJK SC,72,&H00EFEFEF,&H00EFEFEF,&H00303030,&H00000000,0,0,0,0,100,100,1,0,1,0.6,0,2,110,110,42,1
+Style: Theme,Noto Sans CJK SC,80,&H00E7E5E2,&H00E7E5E2,&H00303030,&H00000000,0,0,0,0,100,100,2,0,1,0.6,0,2,110,110,48,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text

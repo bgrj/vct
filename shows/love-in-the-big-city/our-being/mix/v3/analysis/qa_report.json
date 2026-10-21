@@ -1,0 +1,67 @@
+{
+  "status": "technical checks passed",
+  "video": {
+    "filename": "不得人爱便无法爱人_v3.mp4",
+    "duration": 225.6,
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "frames": 6768,
+    "bytes": 37722130,
+    "sha256": "5ca7c6a44a0fd0511fab81317664bd832999847685e06c1aef18f822ffc1ec74"
+  },
+  "source_media": "still images, not motion episode footage",
+  "shots": 47,
+  "caption_cues": 33,
+  "max_caption_characters_per_sec": 3.43,
+  "episode_coverage": {
+    "01": 5,
+    "02": 4,
+    "03": 4,
+    "04": 9,
+    "05": 7,
+    "06": 7,
+    "07": 3,
+    "08": 8
+  },
+  "source_bpm": 131.99654944072202,
+  "cue_alignment": {
+    "measured_cues": 44,
+    "mean_abs_frame_quantization_ms": 10.022675736959231,
+    "max_abs_frame_quantization_ms": 16.643990929706476,
+    "audio_reference": "detected source transients; no subjective listening claim"
+  },
+  "audio": {
+    "integrated_lufs": -14.08,
+    "true_peak_dbtp": -3.89,
+    "lra": 5.4,
+    "source_codec": "MP3 128 kb/s",
+    "export_codec": "AAC 256 kb/s",
+    "master_sample_rate": 48000,
+    "measured_mux_offsets": [
+      {
+        "at_sec": 5,
+        "offset_ms": 0.0
+      },
+      {
+        "at_sec": 70,
+        "offset_ms": 0.0
+      },
+      {
+        "at_sec": 145,
+        "offset_ms": 0.0
+      },
+      {
+        "at_sec": 200,
+        "offset_ms": 0.0
+      }
+    ],
+    "restoration_claim": "loudness and peak management only; no recovery of lossy source information"
+  },
+  "blank_sections": [],
+  "review_limits": [
+    "Technical measurements do not establish emotional quality.",
+    "Key frames inspected separately; no claim of full-speed listening.",
+    "Concat runtime cannot load here: missing GLIBC_2.35; schema-based project only."
+  ]
+}

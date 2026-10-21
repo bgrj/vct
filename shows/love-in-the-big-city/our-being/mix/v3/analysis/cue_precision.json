@@ -1,0 +1,398 @@
+[
+  {
+    "shot": 2,
+    "frame": 369,
+    "time": 12.3,
+    "detected_attack": 12.283356009070294,
+    "attack_kind": "kick",
+    "quantization_error_ms": 16.643990929706476,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 3,
+    "frame": 477,
+    "time": 15.9,
+    "detected_attack": 15.8940589569161,
+    "attack_kind": "kick",
+    "quantization_error_ms": 5.941043083900865,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 4,
+    "frame": 586,
+    "time": 19.533333333333335,
+    "detected_attack": 19.52798185941043,
+    "attack_kind": "kick",
+    "quantization_error_ms": 5.351473922903693,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 5,
+    "frame": 695,
+    "time": 23.166666666666668,
+    "detected_attack": 23.173514739229024,
+    "attack_kind": "kick",
+    "quantization_error_ms": -6.848072562355867,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 6,
+    "frame": 804,
+    "time": 26.8,
+    "detected_attack": 26.79582766439909,
+    "attack_kind": "kick",
+    "quantization_error_ms": 4.172335600909349,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 7,
+    "frame": 913,
+    "time": 30.433333333333334,
+    "detected_attack": 30.441360544217687,
+    "attack_kind": "kick",
+    "quantization_error_ms": -8.027210884353764,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 8,
+    "frame": 1022,
+    "time": 34.06666666666667,
+    "detected_attack": 34.07528344671202,
+    "attack_kind": "kick",
+    "quantization_error_ms": -8.616780045350936,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 9,
+    "frame": 1241,
+    "time": 41.36666666666667,
+    "detected_attack": 41.35473922902494,
+    "attack_kind": "kick",
+    "quantization_error_ms": 11.92743764172377,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 10,
+    "frame": 1349,
+    "time": 44.96666666666667,
+    "detected_attack": 44.977052154195015,
+    "attack_kind": "kick",
+    "quantization_error_ms": -10.385487528346005,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 11,
+    "frame": 1459,
+    "time": 48.63333333333333,
+    "detected_attack": 48.6225850340136,
+    "attack_kind": "kick",
+    "quantization_error_ms": 10.748299319729426,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 12,
+    "frame": 1677,
+    "time": 55.9,
+    "detected_attack": 55.913650793650795,
+    "attack_kind": "kick",
+    "quantization_error_ms": -13.6507936507968,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 13,
+    "frame": 1895,
+    "time": 63.166666666666664,
+    "detected_attack": 63.16988662131519,
+    "attack_kind": "kick",
+    "quantization_error_ms": -3.2199546485287556,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 14,
+    "frame": 2058,
+    "time": 68.6,
+    "detected_attack": 68.61496598639455,
+    "attack_kind": "kick",
+    "quantization_error_ms": -14.965986394557262,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 15,
+    "frame": 2222,
+    "time": 74.06666666666666,
+    "detected_attack": 74.08326530612244,
+    "attack_kind": "kick",
+    "quantization_error_ms": -16.598639455779107,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 16,
+    "frame": 2332,
+    "time": 77.73333333333333,
+    "detected_attack": 77.71718820861678,
+    "attack_kind": "kick",
+    "quantization_error_ms": 16.145124716558712,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 17,
+    "frame": 2441,
+    "time": 81.36666666666666,
+    "detected_attack": 81.36272108843538,
+    "attack_kind": "kick",
+    "quantization_error_ms": 3.945578231281388,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 18,
+    "frame": 2550,
+    "time": 85.0,
+    "detected_attack": 84.99664399092971,
+    "attack_kind": "kick",
+    "quantization_error_ms": 3.3560090702877687,
+    "alignment": "dissolve center"
+  },
+  {
+    "shot": 19,
+    "frame": 2659,
+    "time": 88.63333333333334,
+    "detected_attack": 88.61895691609978,
+    "attack_kind": "kick",
+    "quantization_error_ms": 14.376417233563643,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 20,
+    "frame": 2768,
+    "time": 92.26666666666667,
+    "detected_attack": 92.25287981859411,
+    "attack_kind": "kick",
+    "quantization_error_ms": 13.786848072555813,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 21,
+    "frame": 2931,
+    "time": 97.7,
+    "detected_attack": 97.70956916099773,
+    "attack_kind": "kick",
+    "quantization_error_ms": -9.569160997727977,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 22,
+    "frame": 3095,
+    "time": 103.16666666666667,
+    "detected_attack": 103.16625850340137,
+    "attack_kind": "kick",
+    "quantization_error_ms": 0.4081632653054612,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 23,
+    "frame": 3204,
+    "time": 106.8,
+    "detected_attack": 106.81179138321995,
+    "attack_kind": "kick",
+    "quantization_error_ms": -11.791383219957652,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 24,
+    "frame": 3422,
+    "time": 114.06666666666666,
+    "detected_attack": 114.07963718820862,
+    "attack_kind": "kick",
+    "quantization_error_ms": -12.970521541959101,
+    "alignment": "dissolve center"
+  },
+  {
+    "shot": 25,
+    "frame": 3640,
+    "time": 121.33333333333333,
+    "detected_attack": 121.34748299319727,
+    "attack_kind": "kick",
+    "quantization_error_ms": -14.14965986394634,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 26,
+    "frame": 3749,
+    "time": 124.96666666666667,
+    "detected_attack": 124.98140589569161,
+    "attack_kind": "kick",
+    "quantization_error_ms": -14.73922902493996,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 27,
+    "frame": 3860,
+    "time": 128.66666666666666,
+    "detected_attack": 128.65015873015872,
+    "attack_kind": "kick",
+    "quantization_error_ms": 16.507936507935028,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 28,
+    "frame": 4022,
+    "time": 134.06666666666666,
+    "detected_attack": 134.07201814058956,
+    "attack_kind": "kick",
+    "quantization_error_ms": -5.351473922900141,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 29,
+    "frame": 4186,
+    "time": 139.53333333333333,
+    "detected_attack": 139.54031746031745,
+    "attack_kind": "kick",
+    "quantization_error_ms": -6.9841269841219855,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 30,
+    "frame": 4350,
+    "time": 145.0,
+    "detected_attack": 145.00861678004534,
+    "attack_kind": "kick",
+    "quantization_error_ms": -8.61678004534383,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 31,
+    "frame": 4514,
+    "time": 150.46666666666667,
+    "detected_attack": 150.45369614512472,
+    "attack_kind": "kick",
+    "quantization_error_ms": 12.97052154194489,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 32,
+    "frame": 4623,
+    "time": 154.1,
+    "detected_attack": 154.08761904761906,
+    "attack_kind": "kick",
+    "quantization_error_ms": 12.38095238093706,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 33,
+    "frame": 4732,
+    "time": 157.73333333333332,
+    "detected_attack": 157.7215419501134,
+    "attack_kind": "kick",
+    "quantization_error_ms": 11.79138321992923,
+    "alignment": "dissolve center"
+  },
+  {
+    "shot": 34,
+    "frame": 4949,
+    "time": 164.96666666666667,
+    "detected_attack": 164.96616780045352,
+    "attack_kind": "kick",
+    "quantization_error_ms": 0.49886621314954027,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 35,
+    "frame": 5168,
+    "time": 172.26666666666668,
+    "detected_attack": 172.28045351473924,
+    "attack_kind": "kick",
+    "quantization_error_ms": -13.786848072555813,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 36,
+    "frame": 5386,
+    "time": 179.53333333333333,
+    "detected_attack": 179.53668934240363,
+    "attack_kind": "kick",
+    "quantization_error_ms": -3.3560090703019796,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 37,
+    "frame": 5441,
+    "time": 181.36666666666667,
+    "detected_attack": 181.3710657596372,
+    "attack_kind": "kick",
+    "quantization_error_ms": -4.399092970515994,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 38,
+    "frame": 5495,
+    "time": 183.16666666666666,
+    "detected_attack": 183.1822222222222,
+    "attack_kind": "kick",
+    "quantization_error_ms": -15.555555555550882,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 39,
+    "frame": 5549,
+    "time": 184.96666666666667,
+    "detected_attack": 184.98176870748298,
+    "attack_kind": "kick",
+    "quantization_error_ms": -15.102040816316276,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 40,
+    "frame": 5604,
+    "time": 186.8,
+    "detected_attack": 186.81614512471654,
+    "attack_kind": "kick",
+    "quantization_error_ms": -16.14512471653029,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 41,
+    "frame": 5823,
+    "time": 194.1,
+    "detected_attack": 194.0839909297052,
+    "attack_kind": "kick",
+    "quantization_error_ms": 16.009070294785488,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 42,
+    "frame": 6041,
+    "time": 201.36666666666667,
+    "detected_attack": 201.36344671201815,
+    "attack_kind": "kick",
+    "quantization_error_ms": 3.2199546485287556,
+    "alignment": "dissolve center"
+  },
+  {
+    "shot": 43,
+    "frame": 6150,
+    "time": 205.0,
+    "detected_attack": 204.9857596371882,
+    "attack_kind": "kick",
+    "quantization_error_ms": 14.240362811790419,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 44,
+    "frame": 6368,
+    "time": 212.26666666666668,
+    "detected_attack": 212.26521541950115,
+    "attack_kind": "kick",
+    "quantization_error_ms": 1.4512471655336867,
+    "alignment": "hard cut"
+  },
+  {
+    "shot": 45,
+    "frame": 6531,
+    "time": 217.7,
+    "detected_attack": 217.7102947845805,
+    "attack_kind": "kick",
+    "quantization_error_ms": -10.294784580509031,
+    "alignment": "dissolve center"
+  }
+]
