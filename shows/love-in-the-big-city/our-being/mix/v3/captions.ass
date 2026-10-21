@@ -1,0 +1,48 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+YCbCr Matrix: TV.709
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Quote,Noto Sans SC,72,&H00EFEFEF,&H00EFEFEF,&H00303030,&H00000000,0,0,0,0,100,100,1,0,1,0.6,0,2,110,110,42,1
+Style: Theme,Noto Sans SC,80,&H00E7E5E2,&H00E7E5E2,&H00303030,&H00000000,0,0,0,0,100,100,2,0,1,0.6,0,2,110,110,48,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.35,0:00:05.35,Quote,,0,0,0,,{\fad(90,110)}明明希望你可以爱我
+Dialogue: 0,0:00:05.59,0:00:12.18,Quote,,0,0,0,,{\fad(90,110)}却好像没有承受那份爱意的勇气
+Dialogue: 0,0:00:12.42,0:00:15.78,Quote,,0,0,0,,{\fad(90,110)}我的名字叫做金南圭
+Dialogue: 0,0:00:16.02,0:00:19.41,Quote,,0,0,0,,{\fad(90,110)}那天有平安到家吗
+Dialogue: 0,0:00:19.65,0:00:23.05,Quote,,0,0,0,,{\fad(90,110)}我们的相遇
+Dialogue: 0,0:00:30.55,0:00:33.95,Quote,,0,0,0,,{\fad(90,110)}我们共同点还真多
+Dialogue: 0,0:00:34.19,0:00:41.25,Quote,,0,0,0,,{\fad(90,110)}长得这么可爱\N我如果见过 不可能会忘记
+Dialogue: 0,0:00:41.49,0:00:44.85,Quote,,0,0,0,,{\fad(90,110)}我们来拍照吧
+Dialogue: 0,0:00:45.09,0:00:48.51,Quote,,0,0,0,,{\fad(90,110)}不要拍啦
+Dialogue: 0,0:00:48.75,0:00:55.78,Quote,,0,0,0,,{\fad(90,110)}英洙哥 你觉得我们很丢脸吗
+Dialogue: 0,0:00:56.02,0:01:03.05,Quote,,0,0,0,,{\fad(90,110)}被爱着的人 脸色看起来不一样
+Dialogue: 0,0:01:03.29,0:01:08.48,Quote,,0,0,0,,{\fad(90,110)}付出爱意的人 看起来也不太一样
+Dialogue: 0,0:01:08.72,0:01:13.95,Quote,,0,0,0,,{\fad(90,110)}你觉得我们是什么样的关系
+Dialogue: 0,0:01:14.19,0:01:17.61,Quote,,0,0,0,,{\fad(90,110)}你该不会以为…
+Dialogue: 0,0:01:17.85,0:01:21.25,Quote,,0,0,0,,{\fad(90,110)}这份感情是爱情吧
+Dialogue: 0,0:01:25.12,0:01:28.51,Quote,,0,0,0,,{\fad(90,110)}我在附近咖啡厅等你
+Dialogue: 0,0:01:28.75,0:01:32.15,Quote,,0,0,0,,{\fad(90,110)}哥 跟我一起去读吧
+Dialogue: 0,0:01:32.39,0:01:37.58,Quote,,0,0,0,,{\fad(90,110)}我们要在一起吗
+Dialogue: 0,0:01:37.82,0:01:43.05,Quote,,0,0,0,,{\fad(90,110)}现在不就待在一起了吗
+Dialogue: 0,0:01:46.92,0:01:53.95,Quote,,0,0,0,,{\fad(90,110)}不再是我家 而是我们的家
+Dialogue: 0,0:01:54.19,0:02:01.21,Quote,,0,0,0,,{\fad(90,110)}就连我都对凯莉感到陌生\N圭浩却理所当然地接纳了一切
+Dialogue: 0,0:02:08.79,0:02:13.95,Quote,,0,0,0,,{\fad(90,110)}我们不是每天都待在一起吗
+Dialogue: 0,0:02:14.19,0:02:19.41,Quote,,0,0,0,,{\fad(90,110)}不是那种待在一起啊
+Dialogue: 0,0:02:19.65,0:02:24.88,Quote,,0,0,0,,{\fad(90,110)}我也想跟你好好生活
+Dialogue: 0,0:02:25.12,0:02:30.35,Quote,,0,0,0,,{\fad(90,110)}你跟我一起去上海吧
+Dialogue: 0,0:02:34.22,0:02:37.61,Quote,,0,0,0,,{\fad(90,110)}圭浩已经离开韩国一年了
+Dialogue: 0,0:02:37.85,0:02:44.85,Quote,,0,0,0,,{\fad(90,110)}我以为会和圭浩永远在一起\N如今却连互相问候都没办法
+Dialogue: 0,0:02:45.09,0:02:52.15,Quote,,0,0,0,,{\fad(90,110)}但为什么我们的爱却无处可去呢
+Dialogue: 0,0:02:52.39,0:02:59.41,Quote,,0,0,0,,{\fad(90,110)}也许爱情\N是不假修饰地将自己分享给对方
+Dialogue: 0,0:03:06.92,0:03:13.98,Quote,,0,0,0,,{\fad(90,110)}我虽然找到了\N能让自己完全坦承的对象
+Dialogue: 0,0:03:14.22,0:03:21.25,Quote,,0,0,0,,{\fad(90,110)}当时却不知道这有多珍贵
+Dialogue: 0,0:03:25.12,0:03:32.15,Quote,,0,0,0,,{\fad(90,110)}就是爱情\N是我唯一的愿望
+Dialogue: 0,0:03:41.49,0:03:45.48,Theme,,0,0,0,,{\fad(90,110)}不得人爱，便无法爱人

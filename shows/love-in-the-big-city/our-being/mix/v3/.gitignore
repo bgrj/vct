@@ -1,0 +1,6 @@
+assets/
+qa/
+output/
+__pycache__/
+segments.ffconcat
+*.log

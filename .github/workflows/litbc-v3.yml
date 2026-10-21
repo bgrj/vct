@@ -1,0 +1,65 @@
+name: Love in the Big City - V3 export
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'shows/love-in-the-big-city/our-being/mix/v3/build.py'
+      - 'shows/love-in-the-big-city/our-being/mix/v3/timeline.json'
+      - 'shows/love-in-the-big-city/our-being/mix/v3/verify.py'
+      - '.github/workflows/litbc-v3.yml'
+permissions:
+  contents: write
+concurrency:
+  group: litbc-v3-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      NOTO_CJK_FAMILY: Noto Sans CJK SC
+    defaults:
+      run:
+        working-directory: shows/love-in-the-big-city/our-being/mix/v3
+    steps:
+      - name: Check out the V3 source only
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          sparse-checkout: |
+            shows/love-in-the-big-city/our-being/mix/v3
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Local rendering dependencies - no paid APIs
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg fonts-noto-cjk
+          python -m pip install -r requirements.txt
+      - name: Render exactly the approved timeline
+        run: python build.py --workers 2
+      - name: Check frames, coverage, loudness, blank sections, audio offset
+        run: python verify.py
+      - name: Generate the Concat-format editing document
+        run: python make_concat.py
+      - name: Preserve downloadable review files
+        uses: actions/upload-artifact@v4
+        with:
+          name: litbc-v3-review
+          path: |
+            shows/love-in-the-big-city/our-being/mix/v3/output/不得人爱便无法爱人_v3.mp4
+            shows/love-in-the-big-city/our-being/mix/v3/analysis/qa_report.json
+            shows/love-in-the-big-city/our-being/mix/v3/captions.srt
+          if-no-files-found: error
+          retention-days: 14
+      - name: Commit only the V3 film and its report
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -f output/不得人爱便无法爱人_v3.mp4 analysis/qa_report.json analysis/cue_precision.json concat.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'video: export Love in the Big City emotional montage V3'
+          git pull --rebase origin main
+          git push origin HEAD:main
